@@ -9,13 +9,21 @@ import {
   cancelDailyNotification,
 } from '../utils/notifications';
 
+interface RegisteredUser {
+  name: string;
+  email: string;
+  password: string;
+}
+
 interface AuthState {
   hasOnboarded: boolean;
   isAuthenticated: boolean;
   user: UserProfile | null;
   notificationsEnabled: boolean;
+  registeredUsers: Record<string, RegisteredUser>;
   completeOnboarding: () => void;
-  login: (email: string, name?: string) => Promise<{ error: Error | null }>;
+  signUp: (name: string, email: string, password: string) => Promise<{ error: Error | null }>;
+  login: (email: string, password: string) => Promise<{ error: Error | null }>;
   logOut: () => Promise<void>;
   updateProfile: (changes: Partial<Omit<UserProfile, 'id' | 'email'>>) => void;
   setNotificationsEnabled: (enabled: boolean) => Promise<boolean>;
@@ -23,25 +31,81 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       hasOnboarded: false,
       isAuthenticated: false,
       user: null,
       notificationsEnabled: false,
+      registeredUsers: {
+        'demo@coinzy.com': {
+          name: 'Demo User',
+          email: 'demo@coinzy.com',
+          password: 'password123',
+        },
+      },
 
       completeOnboarding: () => set({ hasOnboarded: true }),
 
-      // Action: Direct authentication (instantly log in user)
-      login: async (email, name) => {
+      // Action: Register a new email/password account
+      signUp: async (name, email, password) => {
         try {
-          console.log(`[Auth Store] Direct login for email: ${email}, name: ${name}`);
+          const emailLower = email.trim().toLowerCase();
+          const registeredUsers = get().registeredUsers;
+
+          if (emailLower in registeredUsers) {
+            throw new Error('An account with this email already exists.');
+          }
+
+          const newUser: RegisteredUser = {
+            name: name.trim(),
+            email: emailLower,
+            password: password,
+          };
+
+          set((state) => ({
+            registeredUsers: {
+              ...state.registeredUsers,
+              [emailLower]: newUser,
+            },
+            isAuthenticated: true,
+            hasOnboarded: true,
+            user: {
+              id: 'usr_' + Math.random().toString(36).substring(2, 11),
+              name: newUser.name,
+              email: emailLower,
+              currency: 'USD',
+              avatarColor: colors.primary,
+            },
+          }));
+          return { error: null };
+        } catch (error: any) {
+          console.error('[Auth Store] signUp Error:', error);
+          return { error: error || new Error('Failed to create account.') };
+        }
+      },
+
+      // Action: Login with email/password credentials
+      login: async (email, password) => {
+        try {
+          const emailLower = email.trim().toLowerCase();
+          const registeredUsers = get().registeredUsers;
+          const userRecord = registeredUsers[emailLower];
+
+          if (!userRecord) {
+            throw new Error('No account found with this email.');
+          }
+
+          if (userRecord.password !== password) {
+            throw new Error('Incorrect password. Please try again.');
+          }
+
           set({
             isAuthenticated: true,
             hasOnboarded: true,
             user: {
               id: 'usr_' + Math.random().toString(36).substring(2, 11),
-              name: name || email.split('@')[0] || 'User',
-              email: email,
+              name: userRecord.name,
+              email: emailLower,
               currency: 'USD',
               avatarColor: colors.primary,
             },
@@ -82,11 +146,12 @@ export const useAuthStore = create<AuthState>()(
       },
     }),
     {
-      name: 'coinzy-auth',
+      name: 'coinzy-auth-v2',
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
         hasOnboarded: state.hasOnboarded,
         notificationsEnabled: state.notificationsEnabled,
+        registeredUsers: state.registeredUsers,
       }),
     }
   )

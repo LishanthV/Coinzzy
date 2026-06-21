@@ -26,20 +26,21 @@ export default function LoginScreen() {
 
   // Form Details
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   // Submit login credentials
   const onSubmit = async () => {
-    if (!email.trim()) {
-      setError('Enter your email.');
+    if (!email.trim() || !password.trim()) {
+      setError('Please enter both email and password.');
       return;
     }
     setError('');
     setIsLoading(true);
 
     try {
-      const { error: err } = await login(email.trim());
+      const { error: err } = await login(email.trim(), password.trim());
       if (err) {
         setError(err.message || 'Failed to log in.');
       }
@@ -68,6 +69,15 @@ export default function LoginScreen() {
               onChangeText={setEmail}
               autoCapitalize="none"
               keyboardType="email-address"
+            />
+
+            <FormInput
+              label="Password"
+              placeholder="••••••••"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
             />
             {error ? <Text style={styles.error}>{error}</Text> : null}
           </View>

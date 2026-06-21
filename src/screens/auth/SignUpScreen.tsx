@@ -22,17 +22,18 @@ type Nav = NativeStackNavigationProp<RootStackParamList, 'SignUp'>;
 
 export default function SignUpScreen() {
   const navigation = useNavigation<Nav>();
-  const login = useAuthStore((s) => s.login);
+  const signUp = useAuthStore((s) => s.signUp);
 
   // Form Details
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   // Submit initial sign-up credentials
   const onSubmit = async () => {
-    if (!name.trim() || !email.trim()) {
+    if (!name.trim() || !email.trim() || !password.trim()) {
       setError('Fill in every field to continue.');
       return;
     }
@@ -40,11 +41,15 @@ export default function SignUpScreen() {
       setError('Enter a valid email address.');
       return;
     }
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
     setError('');
     setIsLoading(true);
 
     try {
-      const { error: err } = await login(email.trim(), name.trim());
+      const { error: err } = await signUp(name.trim(), email.trim(), password.trim());
       if (err) {
         setError(err.message || 'Failed to create account.');
       }
@@ -82,6 +87,14 @@ export default function SignUpScreen() {
               onChangeText={setEmail}
               autoCapitalize="none"
               keyboardType="email-address"
+            />
+            <FormInput
+              label="Password"
+              placeholder="Min. 6 characters"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
             />
             {error ? <Text style={styles.error}>{error}</Text> : null}
           </View>
