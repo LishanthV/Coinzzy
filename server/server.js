@@ -22,6 +22,14 @@ const dbConfig = {
 };
 const DB_NAME = process.env.DB_NAME || 'coinzy_db';
 
+console.log('[Database Debug] Configuration:', {
+  host: dbConfig.host,
+  user: dbConfig.user,
+  passwordLength: dbConfig.password ? dbConfig.password.length : 0,
+  port: dbConfig.port,
+  DB_NAME
+});
+
 let pool;
 
 // Test connection, auto-create database & run schema check on startup
