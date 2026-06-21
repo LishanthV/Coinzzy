@@ -15,15 +15,11 @@ interface AuthState {
   user: UserProfile | null;
   notificationsEnabled: boolean;
   completeOnboarding: () => void;
-  sendOtp: (email: string, name?: string) => Promise<{ error: Error | null }>;
-  verifyOtp: (email: string, token: string) => Promise<{ error: Error | null }>;
+  login: (email: string, name?: string) => Promise<{ error: Error | null }>;
   logOut: () => Promise<void>;
   updateProfile: (changes: Partial<Omit<UserProfile, 'id' | 'email'>>) => void;
   setNotificationsEnabled: (enabled: boolean) => Promise<boolean>;
 }
-
-// Retrieve the backend URL from environment variables
-const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://localhost:5000';
 
 export const useAuthStore = create<AuthState>()(
   persist(
@@ -35,12 +31,13 @@ export const useAuthStore = create<AuthState>()(
 
       completeOnboarding: () => set({ hasOnboarded: true }),
 
-      // Action: Mock sending OTP (No longer calls Express/Nodemailer backend)
-      sendOtp: async (email, name) => {
+      // Action: Direct authentication (instantly log in user)
+      login: async (email, name) => {
         try {
-          console.log(`[Auth Store] Mock OTP request for email: ${email}, name: ${name}`);
-          // Temporarily hold user details in state to verify in the next step
+          console.log(`[Auth Store] Direct login for email: ${email}, name: ${name}`);
           set({
+            isAuthenticated: true,
+            hasOnboarded: true,
             user: {
               id: 'usr_' + Math.random().toString(36).substring(2, 11),
               name: name || email.split('@')[0] || 'User',
@@ -51,31 +48,8 @@ export const useAuthStore = create<AuthState>()(
           });
           return { error: null };
         } catch (error: any) {
-          console.error('[Auth Store] sendOtp Mock Error:', error);
-          return { error: error || new Error('Failed to start mock session.') };
-        }
-      },
-
-      // Action: Mock verification (Accepts any 6-digit OTP code)
-      verifyOtp: async (email, token) => {
-        try {
-          console.log(`[Auth Store] Mock verifying OTP code: ${token} for email: ${email}`);
-          // Instantly authorize the user and mark onboarding as complete
-          set((state) => ({
-            isAuthenticated: true,
-            hasOnboarded: true,
-            user: state.user || {
-              id: 'usr_' + Math.random().toString(36).substring(2, 11),
-              name: email.split('@')[0] || 'User',
-              email: email,
-              currency: 'USD',
-              avatarColor: colors.primary,
-            },
-          }));
-          return { error: null };
-        } catch (error: any) {
-          console.error('[Auth Store] verifyOtp Mock Error:', error);
-          return { error: error || new Error('Verification failed.') };
+          console.error('[Auth Store] login Error:', error);
+          return { error: error || new Error('Failed to log in.') };
         }
       },
 
