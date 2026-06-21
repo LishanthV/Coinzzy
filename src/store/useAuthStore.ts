@@ -35,65 +35,46 @@ export const useAuthStore = create<AuthState>()(
 
       completeOnboarding: () => set({ hasOnboarded: true }),
 
-      // Action: Send OTP via self-hosted Express + Nodemailer server
+      // Action: Mock sending OTP (No longer calls Express/Nodemailer backend)
       sendOtp: async (email, name) => {
         try {
-          const response = await fetch(`${backendUrl}/api/auth/send-otp`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
+          console.log(`[Auth Store] Mock OTP request for email: ${email}, name: ${name}`);
+          // Temporarily hold user details in state to verify in the next step
+          set({
+            user: {
+              id: 'usr_' + Math.random().toString(36).substring(2, 11),
+              name: name || email.split('@')[0] || 'User',
+              email: email,
+              currency: 'USD',
+              avatarColor: colors.primary,
             },
-            body: JSON.stringify({ email, name }),
           });
-
-          const data = await response.json();
-
-          if (!response.ok) {
-            throw new Error(data.error || 'Failed to send OTP code.');
-          }
-
           return { error: null };
         } catch (error: any) {
-          console.error('[Auth Store] sendOtp Error:', error);
-          return { error: error || new Error('Connection refused by self-hosted server.') };
+          console.error('[Auth Store] sendOtp Mock Error:', error);
+          return { error: error || new Error('Failed to start mock session.') };
         }
       },
 
-      // Action: Verify OTP via self-hosted server and log user in
+      // Action: Mock verification (Accepts any 6-digit OTP code)
       verifyOtp: async (email, token) => {
         try {
-          const response = await fetch(`${backendUrl}/api/auth/verify-otp`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
+          console.log(`[Auth Store] Mock verifying OTP code: ${token} for email: ${email}`);
+          // Instantly authorize the user and mark onboarding as complete
+          set((state) => ({
+            isAuthenticated: true,
+            hasOnboarded: true,
+            user: state.user || {
+              id: 'usr_' + Math.random().toString(36).substring(2, 11),
+              name: email.split('@')[0] || 'User',
+              email: email,
+              currency: 'USD',
+              avatarColor: colors.primary,
             },
-            body: JSON.stringify({ email, token }),
-          });
-
-          const data = await response.json();
-
-          if (!response.ok) {
-            throw new Error(data.error || 'Invalid verification code.');
-          }
-
-          // OTP verified successfully! Update the auth state
-          if (data.success && data.user) {
-            set({
-              isAuthenticated: true,
-              hasOnboarded: true,
-              user: {
-                id: data.user.id,
-                name: data.user.name,
-                email: data.user.email,
-                currency: 'USD',
-                avatarColor: colors.primary,
-              },
-            });
-          }
-
+          }));
           return { error: null };
         } catch (error: any) {
-          console.error('[Auth Store] verifyOtp Error:', error);
+          console.error('[Auth Store] verifyOtp Mock Error:', error);
           return { error: error || new Error('Verification failed.') };
         }
       },
