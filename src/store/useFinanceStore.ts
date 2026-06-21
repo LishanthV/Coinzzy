@@ -153,6 +153,7 @@ export const useFinanceStore = create<FinanceState>()(
 
       loadUserData: (userId) =>
         set((state) => {
+          console.log(`[Finance Store] Loading data bucket for User ID: ${userId}`);
           const userData = state.userStorage[userId] || {
             accounts: seedAccounts.map((acc) => ({ ...acc, balance: 0 })),
             categories: seedCategories,
@@ -170,6 +171,7 @@ export const useFinanceStore = create<FinanceState>()(
 
       clearUserData: () =>
         set((state) => {
+          console.log(`[Finance Store] Clearing and saving active state for User ID: ${state.currentUserId}`);
           let userStorage = { ...state.userStorage };
           if (state.currentUserId) {
             userStorage[state.currentUserId] = {
