@@ -10,19 +10,12 @@ import {
 } from '../utils/notifications';
 import { useFinanceStore } from './useFinanceStore';
 
-interface RegisteredUser {
-  id: string;
-  name: string;
-  email: string;
-  password: string;
-}
-
 interface AuthState {
   hasOnboarded: boolean;
   isAuthenticated: boolean;
   user: UserProfile | null;
+  token: string | null;
   notificationsEnabled: boolean;
-  registeredUsers: Record<string, RegisteredUser>;
   completeOnboarding: () => void;
   signUp: (name: string, email: string, password: string) => Promise<{ error: Error | null }>;
   login: (email: string, password: string) => Promise<{ error: Error | null }>;
@@ -31,97 +24,96 @@ interface AuthState {
   setNotificationsEnabled: (enabled: boolean) => Promise<boolean>;
 }
 
+const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://localhost:5000';
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
       hasOnboarded: false,
       isAuthenticated: false,
       user: null,
+      token: null,
       notificationsEnabled: false,
-      registeredUsers: {
-        'demo@coinzy.com': {
-          id: 'usr_demo',
-          name: 'Demo User',
-          email: 'demo@coinzy.com',
-          password: 'password123',
-        },
-      },
 
       completeOnboarding: () => set({ hasOnboarded: true }),
 
-      // Action: Register a new email/password account
+      // Action: Register a new account via MySQL backend
       signUp: async (name, email, password) => {
         try {
-          const emailLower = email.trim().toLowerCase();
-          const registeredUsers = get().registeredUsers;
+          console.log(`[Auth Store] SignUp requested for email: ${email}`);
+          const response = await fetch(`${backendUrl}/api/auth/signup`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ name, email, password }),
+          });
 
-          if (emailLower in registeredUsers) {
-            throw new Error('An account with this email already exists.');
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(data.error || 'Failed to create account.');
           }
 
-          const newUserId = 'usr_' + Math.random().toString(36).substring(2, 11);
+          const token = data.token;
+          const user = data.user;
 
-          const newUser: RegisteredUser = {
-            id: newUserId,
-            name: name.trim(),
-            email: emailLower,
-            password: password,
-          };
-
-          // Save current user's data and load new user's empty data
+          // Clear local active state and fetch this user's data from MySQL backend
           useFinanceStore.getState().clearUserData();
-          useFinanceStore.getState().loadUserData(newUserId);
+          await useFinanceStore.getState().loadUserData(user.id, token);
 
-          set((state) => ({
-            registeredUsers: {
-              ...state.registeredUsers,
-              [emailLower]: newUser,
-            },
+          set({
+            token,
             isAuthenticated: true,
             hasOnboarded: true,
             user: {
-              id: newUserId,
-              name: newUser.name,
-              email: emailLower,
+              id: user.id,
+              name: user.name,
+              email: user.email,
               currency: 'USD',
               avatarColor: colors.primary,
             },
-          }));
+          });
           return { error: null };
         } catch (error: any) {
           console.error('[Auth Store] signUp Error:', error);
-          return { error: error || new Error('Failed to create account.') };
+          return { error: error || new Error('Connection failed to MySQL backend.') };
         }
       },
 
-      // Action: Login with email/password credentials
+      // Action: Login via MySQL backend
       login: async (email, password) => {
         try {
-          const emailLower = email.trim().toLowerCase();
-          const registeredUsers = get().registeredUsers;
-          const userRecord = registeredUsers[emailLower];
+          console.log(`[Auth Store] Login requested for email: ${email}`);
+          const response = await fetch(`${backendUrl}/api/auth/login`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ email, password }),
+          });
 
-          if (!userRecord) {
-            throw new Error('No account found with this email.');
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(data.error || 'Failed to log in.');
           }
 
-          if (userRecord.password !== password) {
-            throw new Error('Incorrect password. Please try again.');
-          }
+          const token = data.token;
+          const user = data.user;
 
-          const userId = userRecord.id || 'usr_' + Math.random().toString(36).substring(2, 11);
-
-          // Save current user's data and load the logging-in user's data
+          // Clear local active state and fetch this user's data from MySQL backend
           useFinanceStore.getState().clearUserData();
-          useFinanceStore.getState().loadUserData(userId);
+          await useFinanceStore.getState().loadUserData(user.id, token);
 
           set({
+            token,
             isAuthenticated: true,
             hasOnboarded: true,
             user: {
-              id: userId,
-              name: userRecord.name,
-              email: emailLower,
+              id: user.id,
+              name: user.name,
+              email: user.email,
               currency: 'USD',
               avatarColor: colors.primary,
             },
@@ -129,14 +121,14 @@ export const useAuthStore = create<AuthState>()(
           return { error: null };
         } catch (error: any) {
           console.error('[Auth Store] login Error:', error);
-          return { error: error || new Error('Failed to log in.') };
+          return { error: error || new Error('Connection failed to MySQL backend.') };
         }
       },
 
       logOut: async () => {
-        // Save current user's data first and clear state
+        // Clear active session in finance store
         useFinanceStore.getState().clearUserData();
-        set({ isAuthenticated: false, user: null });
+        set({ isAuthenticated: false, user: null, token: null });
       },
 
       updateProfile: (changes) =>
@@ -164,12 +156,14 @@ export const useAuthStore = create<AuthState>()(
       },
     }),
     {
-      name: 'coinzy-auth-v2',
+      name: 'coinzy-auth-v3',
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
         hasOnboarded: state.hasOnboarded,
         notificationsEnabled: state.notificationsEnabled,
-        registeredUsers: state.registeredUsers,
+        isAuthenticated: state.isAuthenticated,
+        user: state.user,
+        token: state.token,
       }),
     }
   )

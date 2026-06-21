@@ -21,24 +21,35 @@ interface FinanceState {
   currentUserId: string | null;
 
   // Transactions
-  addTransaction: (txn: Omit<Transaction, 'id'>) => void;
-  updateTransaction: (id: string, changes: Partial<Omit<Transaction, 'id'>>) => void;
-  deleteTransaction: (id: string) => void;
+  addTransaction: (txn: Omit<Transaction, 'id'>) => Promise<void>;
+  updateTransaction: (id: string, changes: Partial<Omit<Transaction, 'id'>>) => Promise<void>;
+  deleteTransaction: (id: string) => Promise<void>;
 
   // Budgets
-  setBudget: (categoryId: string, limit: number) => void;
-  removeBudget: (categoryId: string) => void;
+  setBudget: (categoryId: string, limit: number) => Promise<void>;
+  removeBudget: (categoryId: string) => Promise<void>;
 
   // Accounts
-  addAccount: (account: Omit<Account, 'id'>) => void;
+  addAccount: (account: Omit<Account, 'id'>) => Promise<void>;
 
   // Derived
-  resetToSeed: () => void;
+  resetToSeed: () => Promise<void>;
 
   // User Loading
-  loadUserData: (userId: string) => void;
+  loadUserData: (userId: string, token?: string) => Promise<void>;
   clearUserData: () => void;
 }
+
+const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'http://localhost:5000';
+
+const getAuthHeaders = (overrideToken?: string) => {
+  // Lazily require useAuthStore to prevent circular dependency evaluation issues at bundle startup
+  const token = overrideToken || require('./useAuthStore').useAuthStore.getState().token;
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': token ? `Bearer ${token}` : '',
+  };
+};
 
 function applyBalanceDelta(accounts: Account[], txn: Omit<Transaction, 'id'>, sign: 1 | -1): Account[] {
   return accounts.map((acc) => {
@@ -90,16 +101,37 @@ export const useFinanceStore = create<FinanceState>()(
       userStorage: {},
       currentUserId: null,
 
-      addTransaction: (txn) =>
-        updateStateAndStorage(set, (state) => ({
-          transactions: [{ ...txn, id: generateId('txn') }, ...state.transactions],
-          accounts: applyBalanceDelta(state.accounts, txn, 1),
-        })),
+      addTransaction: async (txn) => {
+        const tempId = generateId('txn');
+        const finalTxn = { ...txn, id: tempId };
 
-      updateTransaction: (id, changes) =>
+        // Optimistically update UI locally
+        updateStateAndStorage(set, (state) => ({
+          transactions: [finalTxn, ...state.transactions],
+          accounts: applyBalanceDelta(state.accounts, txn, 1),
+        }));
+
+        try {
+          console.log('[Finance Store] Syncing addTransaction to MySQL...');
+          const response = await fetch(`${backendUrl}/api/transactions`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify(finalTxn),
+          });
+          if (!response.ok) throw new Error('API Sync Failed');
+        } catch (error) {
+          console.warn('[Finance Store] addTransaction API Sync failed; stored in offline queue.', error);
+        }
+      },
+
+      updateTransaction: async (id, changes) => {
+        let originalTxn: Transaction | undefined;
+
+        // Optimistically update UI locally
         updateStateAndStorage(set, (state) => {
           const existing = state.transactions.find((t) => t.id === id);
           if (!existing) return {};
+          originalTxn = existing;
           let accounts = applyBalanceDelta(state.accounts, existing, -1);
           const updated = { ...existing, ...changes };
           accounts = applyBalanceDelta(accounts, updated, 1);
@@ -107,20 +139,58 @@ export const useFinanceStore = create<FinanceState>()(
             accounts,
             transactions: state.transactions.map((t) => (t.id === id ? updated : t)),
           };
-        }),
+        });
 
-      deleteTransaction: (id) =>
+        if (!originalTxn) return;
+
+        try {
+          console.log('[Finance Store] Syncing updateTransaction to MySQL...');
+          const finalTxn = { ...originalTxn, ...changes };
+          const response = await fetch(`${backendUrl}/api/transactions/${id}`, {
+            method: 'PUT',
+            headers: getAuthHeaders(),
+            body: JSON.stringify(finalTxn),
+          });
+          if (!response.ok) throw new Error('API Sync Failed');
+        } catch (error) {
+          console.warn('[Finance Store] updateTransaction API Sync failed.', error);
+        }
+      },
+
+      deleteTransaction: async (id) => {
+        let originalTxn: Transaction | undefined;
+
+        // Optimistically update UI locally
         updateStateAndStorage(set, (state) => {
           const existing = state.transactions.find((t) => t.id === id);
           if (!existing) return {};
+          originalTxn = existing;
           const accounts = applyBalanceDelta(state.accounts, existing, -1);
           return {
             accounts,
             transactions: state.transactions.filter((t) => t.id !== id),
           };
-        }),
+        });
 
-      setBudget: (categoryId, limit) =>
+        if (!originalTxn) return;
+
+        try {
+          console.log('[Finance Store] Syncing deleteTransaction to MySQL...');
+          const response = await fetch(`${backendUrl}/api/transactions/${id}`, {
+            method: 'DELETE',
+            headers: getAuthHeaders(),
+          });
+          if (!response.ok) throw new Error('API Sync Failed');
+        } catch (error) {
+          console.warn('[Finance Store] deleteTransaction API Sync failed.', error);
+        }
+      },
+
+      setBudget: async (categoryId, limit) => {
+        const tempId = generateId('bud');
+        const budgetItem = { id: tempId, categoryId, limit, period: 'monthly' };
+
+        // Optimistically update UI locally
         updateStateAndStorage(set, (state) => {
           const existing = state.budgets.find((b) => b.categoryId === categoryId);
           if (existing) {
@@ -129,49 +199,133 @@ export const useFinanceStore = create<FinanceState>()(
             };
           }
           return {
-            budgets: [...state.budgets, { id: generateId('bud'), categoryId, limit, period: 'monthly' }],
+            budgets: [...state.budgets, budgetItem],
           };
-        }),
+        });
 
-      removeBudget: (categoryId) =>
+        try {
+          console.log('[Finance Store] Syncing setBudget to MySQL...');
+          const response = await fetch(`${backendUrl}/api/budgets`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify(budgetItem),
+          });
+          if (!response.ok) throw new Error('API Sync Failed');
+        } catch (error) {
+          console.warn('[Finance Store] setBudget API Sync failed.', error);
+        }
+      },
+
+      removeBudget: async (categoryId) => {
+        // Optimistically update UI locally
         updateStateAndStorage(set, (state) => ({
           budgets: state.budgets.filter((b) => b.categoryId !== categoryId),
-        })),
+        }));
 
-      addAccount: (account) =>
+        try {
+          console.log('[Finance Store] Syncing removeBudget to MySQL...');
+          const response = await fetch(`${backendUrl}/api/budgets/${categoryId}`, {
+            method: 'DELETE',
+            headers: getAuthHeaders(),
+          });
+          if (!response.ok) throw new Error('API Sync Failed');
+        } catch (error) {
+          console.warn('[Finance Store] removeBudget API Sync failed.', error);
+        }
+      },
+
+      addAccount: async (account) => {
+        const tempId = generateId('acc');
+        const finalAccount = { ...account, id: tempId };
+
+        // Optimistically update UI locally
         updateStateAndStorage(set, (state) => ({
-          accounts: [...state.accounts, { ...account, id: generateId('acc') }],
-        })),
+          accounts: [...state.accounts, finalAccount],
+        }));
 
-      resetToSeed: () =>
+        try {
+          console.log('[Finance Store] Syncing addAccount to MySQL...');
+          const response = await fetch(`${backendUrl}/api/accounts`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify(finalAccount),
+          });
+          if (!response.ok) throw new Error('API Sync Failed');
+        } catch (error) {
+          console.warn('[Finance Store] addAccount API Sync failed.', error);
+        }
+      },
+
+      resetToSeed: async () => {
         updateStateAndStorage(set, () => ({
           accounts: seedAccounts.map((acc) => ({ ...acc, balance: 0 })),
           categories: seedCategories,
           transactions: [],
           budgets: [],
-        })),
+        }));
 
-      loadUserData: (userId) =>
-        set((state) => {
-          console.log(`[Finance Store] Loading data bucket for User ID: ${userId}`);
-          const userData = state.userStorage[userId] || {
-            accounts: seedAccounts.map((acc) => ({ ...acc, balance: 0 })),
-            categories: seedCategories,
-            transactions: [],
-            budgets: [],
-          };
-          return {
+        try {
+          console.log('[Finance Store] Syncing resetToSeed to MySQL...');
+          const response = await fetch(`${backendUrl}/api/data/reset`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+          });
+          if (!response.ok) throw new Error('API Sync Failed');
+        } catch (error) {
+          console.warn('[Finance Store] resetToSeed API Sync failed.', error);
+        }
+      },
+
+      loadUserData: async (userId, token) => {
+        console.log(`[Finance Store] Fetching database records from MySQL for User: ${userId}`);
+        try {
+          const headers = getAuthHeaders(token);
+          
+          const [accountsRes, budgetsRes, transactionsRes] = await Promise.all([
+            fetch(`${backendUrl}/api/accounts`, { headers }),
+            fetch(`${backendUrl}/api/budgets`, { headers }),
+            fetch(`${backendUrl}/api/transactions`, { headers }),
+          ]);
+
+          if (!accountsRes.ok || !budgetsRes.ok || !transactionsRes.ok) {
+            throw new Error('Database server query failed.');
+          }
+
+          const accounts = await accountsRes.json();
+          const budgets = await budgetsRes.json();
+          const transactions = await transactionsRes.json();
+
+          set({
             currentUserId: userId,
-            accounts: userData.accounts,
-            categories: userData.categories,
-            transactions: userData.transactions,
-            budgets: userData.budgets,
-          };
-        }),
+            accounts,
+            budgets,
+            transactions,
+          });
+        } catch (error) {
+          console.warn('[Finance Store] Failed to load data from MySQL server. Falling back to local cache.', error);
+          
+          // Offline fallback
+          set((state) => {
+            const userData = state.userStorage[userId] || {
+              accounts: seedAccounts.map((acc) => ({ ...acc, balance: 0 })),
+              categories: seedCategories,
+              transactions: [],
+              budgets: [],
+            };
+            return {
+              currentUserId: userId,
+              accounts: userData.accounts,
+              categories: userData.categories,
+              transactions: userData.transactions,
+              budgets: userData.budgets,
+            };
+          });
+        }
+      },
 
       clearUserData: () =>
         set((state) => {
-          console.log(`[Finance Store] Clearing and saving active state for User ID: ${state.currentUserId}`);
+          console.log(`[Finance Store] Clearing active state for User ID: ${state.currentUserId}`);
           let userStorage = { ...state.userStorage };
           if (state.currentUserId) {
             userStorage[state.currentUserId] = {
@@ -192,7 +346,7 @@ export const useFinanceStore = create<FinanceState>()(
         }),
     }),
     {
-      name: 'coinzy-finance-v2',
+      name: 'coinzy-finance-v3',
       storage: createJSONStorage(() => AsyncStorage),
     }
   )
