@@ -17,6 +17,7 @@ import TxnDetailScreen from '../screens/history/TxnDetailScreen';
 import AddTransactionScreen from '../screens/transactions/AddTransactionScreen';
 import SavingsGoalsScreen from '../screens/goals/SavingsGoalsScreen';
 import SpendingForecastScreen from '../screens/SpendingForecastScreen';
+import LoanPlannerScreen from '../screens/LoanPlannerScreen';
 
 import { useAuthStore } from '../store/useAuthStore';
 import { RootStackParamList } from './types';
@@ -71,6 +72,11 @@ export function RootNavigator() {
           <Stack.Screen
             name="SpendingForecast"
             component={SpendingForecastScreen}
+            options={{ animation: 'slide_from_right' }}
+          />
+          <Stack.Screen
+            name="LoanPlanner"
+            component={LoanPlannerScreen}
             options={{ animation: 'slide_from_right' }}
           />
         </>

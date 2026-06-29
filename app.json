@@ -2,7 +2,6 @@
   "expo": {
     "name": "Coinzy",
     "slug": "coinzy",
-
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -24,6 +23,11 @@
     },
     "plugins": [
       "expo-font"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7217b0e1-ff82-4b6a-a14e-679a59153f20"
+      }
+    }
   }
 }

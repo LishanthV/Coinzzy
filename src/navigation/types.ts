@@ -12,6 +12,7 @@ export type RootStackParamList = {
   SavingsGoals: undefined;
   AddGoal: { editId?: string } | undefined;
   SpendingForecast: undefined;
+  LoanPlanner: undefined;
 };
 
 export type MainTabParamList = {
