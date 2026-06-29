@@ -47,7 +47,12 @@ export function TransactionRow({
   const sign = isTransfer ? '' : isExpense ? '-' : '+';
   const icon = isTransfer ? 'swap-horizontal' : category?.icon ?? 'ellipse-outline';
   const color = isTransfer ? colors.transfer : category?.color ?? colors.textMuted;
-  const title = isTransfer ? 'Transfer' : category?.name ?? 'Uncategorized';
+  const isOther = transaction.categoryId === 'cat_other_exp' || transaction.categoryId === 'cat_other_inc';
+  const title = isTransfer
+    ? 'Transfer'
+    : (isOther && transaction.customCategory)
+    ? transaction.customCategory
+    : category?.name ?? 'Uncategorized';
 
   return (
     <Pressable

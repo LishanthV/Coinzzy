@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View, Switch, Image, ScrollView } from 'react-native';
+import { Pressable, StyleSheet, Text, View, Switch, Image, ScrollView } from 'react-native';
+import { Alert } from '../../utils/alerts';
 import { useNavigation } from '@react-navigation/native';
 import { CompositeNavigationProp } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
@@ -14,6 +15,8 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { formatCurrency } from '../../utils/format';
 import { MainTabParamList, RootStackParamList } from '../../navigation/types';
 import * as ImagePicker from 'expo-image-picker';
+import SecuritySection from './SecuritySection';
+
 
 type Nav = CompositeNavigationProp<
   BottomTabNavigationProp<MainTabParamList, 'Settings'>,
@@ -367,8 +370,16 @@ export default function SettingsScreen() {
           </View>
         </Card>
 
+        <SecuritySection />
+
         <SectionHeader title="Data" />
         <Card style={{ gap: 0 }}>
+          <Pressable style={styles.linkRow} onPress={() => navigation.navigate('Recurring')}>
+            <Ionicons name="repeat-outline" size={20} color={colors.text} />
+            <Text style={styles.linkText}>Recurring Transactions</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
+          </Pressable>
+          <View style={styles.divider} />
           <Pressable style={styles.linkRow} onPress={() => navigation.navigate('Export')}>
             <Ionicons name="download-outline" size={20} color={colors.text} />
             <Text style={styles.linkText}>Export data (CSV / PDF)</Text>
@@ -380,7 +391,18 @@ export default function SettingsScreen() {
             onPress={() =>
               Alert.alert('Clear all data', 'This will permanently delete all transactions and reset account balances to zero.', [
                 { text: 'Cancel', style: 'cancel' },
-                { text: 'Clear', style: 'destructive', onPress: resetToSeed },
+                {
+                  text: 'Clear',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      await resetToSeed();
+                      Alert.alert('Success', 'All data has been cleared successfully.');
+                    } catch (error) {
+                      Alert.alert('Error', 'Failed to clear data on the server. Please check your connection.');
+                    }
+                  },
+                },
               ])
             }
           >
@@ -396,7 +418,7 @@ export default function SettingsScreen() {
         <View style={{ marginTop: spacing.xl, alignItems: 'center' }}>
           <Text style={styles.footerText}>Coinzy · local-first build</Text>
           <Text style={styles.footerSubtext}>
-            Your data is stored on this device. Connect Supabase later for cloud sync.
+            Your data is stored locally and securely synchronized with the Coinzy cloud backend.
           </Text>
         </View>
       </Screen>

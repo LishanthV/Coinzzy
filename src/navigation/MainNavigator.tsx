@@ -8,6 +8,7 @@ import DashboardScreen from '../screens/dashboard/DashboardScreen';
 import HistoryScreen from '../screens/history/HistoryScreen';
 import StatisticsScreen from '../screens/statistics/StatisticsScreen';
 import BudgetsScreen from '../screens/budgets/BudgetsScreen';
+import RecurringScreen from '../screens/recurring/RecurringScreen';
 import SettingsScreen from '../screens/settings/SettingsScreen';
 import { colors, fonts, fontSizes, radii, spacing } from '../theme';
 import { MainTabParamList, RootStackParamList } from './types';
@@ -19,6 +20,7 @@ const TAB_ICONS: Record<string, { active: string; inactive: string }> = {
   History: { active: 'list', inactive: 'list-outline' },
   Statistics: { active: 'bar-chart', inactive: 'bar-chart-outline' },
   Budgets: { active: 'wallet', inactive: 'wallet-outline' },
+  Recurring: { active: 'repeat', inactive: 'repeat-outline' },
   Settings: { active: 'person', inactive: 'person-outline' },
 };
 
@@ -65,6 +67,7 @@ export function MainNavigator() {
         }}
       />
       <Tab.Screen name="Budgets" component={BudgetsScreen} />
+      <Tab.Screen name="Recurring" component={RecurringScreen} />
       <Tab.Screen name="Settings" component={SettingsScreen} />
     </Tab.Navigator>
   );

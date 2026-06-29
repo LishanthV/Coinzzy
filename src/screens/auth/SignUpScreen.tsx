@@ -37,8 +37,16 @@ export default function SignUpScreen() {
       setError('Enter a valid email address.');
       return;
     }
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters.');
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+    if (!/[A-Z]/.test(password)) {
+      setError('Password must contain at least one uppercase letter.');
+      return;
+    }
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+      setError('Password must contain at least one special character.');
       return;
     }
     setError('');
@@ -59,7 +67,7 @@ export default function SignUpScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView
-        style={{ flex: 1 }}
+        style={{ flex: 1, width: '100%' }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <View style={styles.content}>
@@ -86,7 +94,7 @@ export default function SignUpScreen() {
             />
             <FormInput
               label="Password"
-              placeholder="Min. 6 characters"
+              placeholder="Min. 8 chars, 1 uppercase, 1 special"
               value={password}
               onChangeText={setPassword}
               secureTextEntry
@@ -114,6 +122,9 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
   content: {
     flex: 1,
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.xl,
   },

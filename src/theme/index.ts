@@ -1,9 +1,11 @@
-// ── Coinzy design tokens ──────────────────────────────────────────────
-// A calm, "after-hours ledger" palette: deep ink background, warm paper
-// accents for money-in, and a clay accent for money-out — echoing the
-// architecture & timeline palette from the product plan.
+import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export const colors = {
+// ── Coinzy design tokens ──────────────────────────────────────────────
+// Deep ink background for dark mode, clean slate/paper for light mode.
+
+export const darkColors = {
   // Surfaces
   bg: '#0B0E14',
   surface: '#141923',
@@ -24,7 +26,7 @@ export const colors = {
   transfer: '#5AA8E0',
   transferSoft: 'rgba(90, 168, 224, 0.14)',
 
-  // Accents (mirrors the timeline legend)
+  // Accents
   amber: '#E3A23C',
   amberSoft: 'rgba(227, 162, 60, 0.14)',
   magenta: '#C2447A',
@@ -42,6 +44,74 @@ export const colors = {
   white: '#FFFFFF',
   overlay: 'rgba(8, 10, 16, 0.7)',
 };
+
+export const lightColors = {
+  // Surfaces
+  bg: '#F8F9FA',
+  surface: '#FFFFFF',
+  surfaceAlt: '#E9ECEF',
+  surfaceRaised: '#DEE2E6',
+  border: '#CED4DA',
+  borderSoft: '#E9ECEF',
+
+  // Brand
+  primary: '#5052C0',
+  primarySoft: 'rgba(80, 82, 192, 0.16)',
+
+  // Semantic money colors
+  income: '#22B8CF',
+  incomeSoft: 'rgba(34, 184, 207, 0.14)',
+  expense: '#FA5252',
+  expenseSoft: 'rgba(250, 82, 82, 0.14)',
+  transfer: '#339AF0',
+  transferSoft: 'rgba(51, 154, 240, 0.14)',
+
+  // Accents
+  amber: '#F59F00',
+  amberSoft: 'rgba(245, 159, 0, 0.14)',
+  magenta: '#E64980',
+  magentaSoft: 'rgba(230, 73, 128, 0.14)',
+  green: '#51CF66',
+
+  // Text
+  text: '#212529',
+  textMuted: '#495057',
+  textFaint: '#ADB5BD',
+
+  // Utility
+  danger: '#FA5252',
+  success: '#22B8CF',
+  white: '#FFFFFF',
+  overlay: 'rgba(33, 37, 41, 0.5)',
+};
+
+// Theme Zustand Store
+interface ThemeState {
+  themeMode: 'dark' | 'light';
+  toggleTheme: () => void;
+}
+
+export const useThemeStore = create<ThemeState>()(
+  persist(
+    (set) => ({
+      themeMode: 'dark',
+      toggleTheme: () => set((state) => ({ themeMode: state.themeMode === 'dark' ? 'light' : 'dark' })),
+    }),
+    {
+      name: 'coinzy-theme-v1',
+      storage: createJSONStorage(() => AsyncStorage),
+    }
+  )
+);
+
+// Dynamic Colors ES6 Proxy for static compatibility
+export const colors = new Proxy({}, {
+  get(target, prop: keyof typeof darkColors) {
+    const mode = useThemeStore.getState().themeMode;
+    const activeColors = mode === 'dark' ? darkColors : lightColors;
+    return activeColors[prop];
+  }
+}) as typeof darkColors;
 
 export const fonts = {
   display: 'Sora_600SemiBold',
@@ -88,3 +158,18 @@ export const shadow = {
     elevation: 6,
   },
 };
+
+// Custom React hook for dynamic access
+export function useAppTheme() {
+  const themeMode = useThemeStore((s) => s.themeMode);
+  const activeColors = themeMode === 'dark' ? darkColors : lightColors;
+  return {
+    themeMode,
+    colors: activeColors,
+    fonts,
+    spacing,
+    radii,
+    fontSizes,
+    shadow,
+  };
+}

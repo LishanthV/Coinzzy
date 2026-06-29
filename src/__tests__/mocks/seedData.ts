@@ -1,5 +1,5 @@
-import { Account, Budget, Category, Transaction } from '../types';
-import { colors } from '../theme';
+import { Account, Budget, Category, Transaction } from '../../types';
+import { colors } from '../../theme';
 
 export const seedCategories: Category[] = [
   { id: 'cat_groceries', name: 'Groceries', icon: 'cart-outline', color: colors.income, type: 'expense' },

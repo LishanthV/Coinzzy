@@ -56,3 +56,49 @@ export function useSpendByCategory(ref?: Date) {
   return useFinanceStore(useShallow(selector));
 }
 
+export function useSpendingForecast() {
+  const transactions = useFinanceStore((s) => s.transactions);
+  const budgets = useFinanceStore((s) => s.budgets);
+
+  return useMemo(() => {
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth();
+    const currentDay = today.getDate();
+
+    // Find total days in the current month
+    const totalDays = new Date(currentYear, currentMonth + 1, 0).getDate();
+
+    // Get current month's expenses
+    let currentMonthExpense = 0;
+    for (const t of transactions) {
+      if (t.type !== 'expense') continue;
+      const d = new Date(t.date);
+      if (d.getFullYear() === currentYear && d.getMonth() === currentMonth) {
+        currentMonthExpense += t.amount;
+      }
+    }
+
+    const dailyAverage = currentDay > 0 ? currentMonthExpense / currentDay : 0;
+    const projectedSpend = dailyAverage * totalDays;
+
+    // Total active budget limits
+    const totalBudgetLimit = budgets.reduce((sum, b) => sum + b.limit, 0);
+
+    const isOverBudget = totalBudgetLimit > 0 && projectedSpend > totalBudgetLimit;
+    const pctOfBudget = totalBudgetLimit > 0 ? (projectedSpend / totalBudgetLimit) * 100 : 0;
+
+    return {
+      currentMonthExpense,
+      dailyAverage,
+      projectedSpend,
+      totalBudgetLimit,
+      isOverBudget,
+      pctOfBudget,
+      currentDay,
+      totalDays,
+    };
+  }, [transactions, budgets]);
+}
+
+

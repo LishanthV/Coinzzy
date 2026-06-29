@@ -6,6 +6,11 @@ export type RootStackParamList = {
   TxnDetail: { id: string };
   AddTransaction: { editId?: string } | undefined;
   Export: undefined;
+  Recurring: undefined;
+  PinSetup: undefined;
+  SavingsGoals: undefined;
+  AddGoal: { editId?: string } | undefined;
+  SpendingForecast: undefined;
 };
 
 export type MainTabParamList = {
@@ -13,5 +18,6 @@ export type MainTabParamList = {
   History: undefined;
   Statistics: undefined;
   Budgets: undefined;
+  Recurring: undefined;
   Settings: undefined;
 };

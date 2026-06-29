@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert } from '../../utils/alerts';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -30,6 +31,7 @@ export default function TxnDetailScreen() {
 
   const [note, setNote] = useState(txn?.note ?? '');
   const [categoryId, setCategoryId] = useState(txn?.categoryId);
+  const [customCategory, setCustomCategory] = useState(txn?.customCategory ?? '');
   const [editing, setEditing] = useState(false);
 
   if (!txn) {
@@ -54,7 +56,12 @@ export default function TxnDetailScreen() {
   const sign = isTransfer ? '' : isExpense ? '-' : '+';
 
   const onSave = () => {
-    updateTransaction(txn.id, { note, categoryId: isTransfer ? undefined : categoryId });
+    const isOther = categoryId === 'cat_other_exp' || categoryId === 'cat_other_inc';
+    updateTransaction(txn.id, {
+      note,
+      categoryId: isTransfer ? undefined : categoryId,
+      customCategory: (isTransfer || !isOther) ? undefined : customCategory.trim()
+    });
     setEditing(false);
   };
 
@@ -155,27 +162,42 @@ export default function TxnDetailScreen() {
           <View style={{ marginBottom: spacing.lg }}>
             <Text style={styles.label}>Category</Text>
             {editing ? (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                <View style={styles.categoryRow}>
-                  {availableCategories.map((c) => {
-                    const active = c.id === categoryId;
-                    return (
-                      <Pressable
-                        key={c.id}
-                        onPress={() => setCategoryId(c.id)}
-                        style={[styles.categoryChip, active && { borderColor: c.color, backgroundColor: `${c.color}22` }]}
-                      >
-                        <CategoryIcon icon={c.icon} color={c.color} size={28} />
-                        <Text style={styles.categoryChipText}>{c.name}</Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </ScrollView>
+              <>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: spacing.md }}>
+                  <View style={styles.categoryRow}>
+                    {availableCategories.map((c) => {
+                      const active = c.id === categoryId;
+                      return (
+                        <Pressable
+                          key={c.id}
+                          onPress={() => setCategoryId(c.id)}
+                          style={[styles.categoryChip, active && { borderColor: c.color, backgroundColor: `${c.color}22` }]}
+                        >
+                          <CategoryIcon icon={c.icon} color={c.color} size={28} />
+                          <Text style={styles.categoryChipText}>{c.name}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+                {(categoryId === 'cat_other_exp' || categoryId === 'cat_other_inc') && (
+                  <FormInput
+                    label="Specify Category or Product Name"
+                    placeholder="e.g. Cinema, Gift, Books"
+                    value={customCategory}
+                    onChangeText={setCustomCategory}
+                    editable={editing}
+                  />
+                )}
+              </>
             ) : (
               <View style={styles.readonlyRow}>
                 <CategoryIcon icon={category?.icon ?? 'ellipse-outline'} color={category?.color ?? colors.textMuted} size={32} />
-                <Text style={styles.readonlyText}>{category?.name ?? 'Uncategorized'}</Text>
+                <Text style={styles.readonlyText}>
+                  {(txn.categoryId === 'cat_other_exp' || txn.categoryId === 'cat_other_inc') && txn.customCategory
+                    ? txn.customCategory
+                    : (category?.name ?? 'Uncategorized')}
+                </Text>
               </View>
             )}
           </View>

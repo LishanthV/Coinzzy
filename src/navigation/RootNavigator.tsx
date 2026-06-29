@@ -1,53 +1,80 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { useAuthStore } from '../store/useAuthStore';
-import OnboardingScreen from '../screens/onboarding/OnboardingScreen';
-import SignUpScreen from '../screens/auth/SignUpScreen';
+import { useSecurityStore } from '../store/useSecurityStore';
+
+// Existing screens
 import LoginScreen from '../screens/auth/LoginScreen';
+import SignUpScreen from '../screens/auth/SignUpScreen';
+import OnboardingScreen from '../screens/onboarding/OnboardingScreen';
+import { MainNavigator } from './MainNavigator';
+
+// New screens
+import LockScreen from '../screens/LockScreen';
+import PinSetupScreen from '../screens/PinSetupScreen';
 import TxnDetailScreen from '../screens/history/TxnDetailScreen';
 import AddTransactionScreen from '../screens/transactions/AddTransactionScreen';
-import ExportScreen from '../screens/settings/ExportScreen';
-import { MainNavigator } from './MainNavigator';
+import SavingsGoalsScreen from '../screens/goals/SavingsGoalsScreen';
+import SpendingForecastScreen from '../screens/SpendingForecastScreen';
+
+import { useAuthStore } from '../store/useAuthStore';
 import { RootStackParamList } from './types';
-import { colors } from '../theme';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export function RootNavigator() {
-  const { hasOnboarded, isAuthenticated } = useAuthStore();
+  const { user } = useAuthStore();
+  const { isLocked, isLockEnabled, hasPin, initSecurity, lock } = useSecurityStore();
+
+  // Init security on mount
+  useEffect(() => {
+    initSecurity();
+  }, []);
+
+  // Lock app when it goes to background
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'background' && isLockEnabled && hasPin) {
+        lock();
+      }
+    });
+    return () => subscription.remove();
+  }, [isLockEnabled, hasPin, lock]);
+
+  // Show lock screen if app is locked (regardless of auth state)
+  if (isLocked) {
+    return <LockScreen />;
+  }
 
   return (
-    <Stack.Navigator
-      screenOptions={{
-        headerShown: false,
-        contentStyle: { backgroundColor: colors.bg },
-        animation: 'fade_from_bottom',
-      }}
-    >
-      {!isAuthenticated ? (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      {!user ? (
+        // Auth stack
         <>
-          {!hasOnboarded && (
-            <Stack.Screen name="Onboarding" component={OnboardingScreen} />
-          )}
-          <Stack.Screen name="SignUp" component={SignUpScreen} />
+          <Stack.Screen name="Onboarding" component={OnboardingScreen} />
           <Stack.Screen name="Login" component={LoginScreen} />
+          <Stack.Screen name="SignUp" component={SignUpScreen} />
         </>
       ) : (
+        // Main app stack
         <>
           <Stack.Screen name="Main" component={MainNavigator} />
+          <Stack.Screen name="TxnDetail" component={TxnDetailScreen} />
+          <Stack.Screen name="AddTransaction" component={AddTransactionScreen} />
+          {/* PIN setup — accessible from Settings */}
           <Stack.Screen
-            name="TxnDetail"
-            component={TxnDetailScreen}
+            name="PinSetup"
+            component={PinSetupScreen}
+            options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+          />
+          <Stack.Screen
+            name="SavingsGoals"
+            component={SavingsGoalsScreen}
             options={{ animation: 'slide_from_right' }}
           />
           <Stack.Screen
-            name="AddTransaction"
-            component={AddTransactionScreen}
-            options={{ animation: 'slide_from_bottom', presentation: 'modal' }}
-          />
-          <Stack.Screen
-            name="Export"
-            component={ExportScreen}
+            name="SpendingForecast"
+            component={SpendingForecastScreen}
             options={{ animation: 'slide_from_right' }}
           />
         </>

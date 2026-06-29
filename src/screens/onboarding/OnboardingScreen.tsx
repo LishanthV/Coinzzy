@@ -17,33 +17,35 @@ export default function OnboardingScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.hero}>
-        <OrbitMark />
-        <Text style={styles.brand}>Coinzy</Text>
-        <Text style={styles.tagline}>Every dollar, accounted for.</Text>
-        <Text style={styles.subtitle}>
-          Track spending, set budgets, and see where your money goes — all in one calm,
-          uncluttered place.
-        </Text>
-      </View>
+      <View style={styles.wrapper}>
+        <View style={styles.hero}>
+          <OrbitMark />
+          <Text style={styles.brand}>Coinzy</Text>
+          <Text style={styles.tagline}>Every dollar, accounted for.</Text>
+          <Text style={styles.subtitle}>
+            Track spending, set budgets, and see where your money goes — all in one calm,
+            uncluttered place.
+          </Text>
+        </View>
 
-      <View style={styles.actions}>
-        <Button
-          label="Create an account"
-          onPress={() => {
-            completeOnboarding();
-            navigation.navigate('SignUp');
-          }}
-        />
-        <Button
-          label="I already have an account"
-          variant="secondary"
-          onPress={() => {
-            completeOnboarding();
-            navigation.navigate('Login');
-          }}
-          style={{ marginTop: spacing.md }}
-        />
+        <View style={styles.actions}>
+          <Button
+            label="Create an account"
+            onPress={() => {
+              completeOnboarding();
+              navigation.navigate('SignUp');
+            }}
+          />
+          <Button
+            label="I already have an account"
+            variant="secondary"
+            onPress={() => {
+              completeOnboarding();
+              navigation.navigate('Login');
+            }}
+            style={{ marginTop: spacing.md }}
+          />
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -91,6 +93,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bg,
+  },
+  wrapper: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
     paddingHorizontal: spacing.xl,
     justifyContent: 'space-between',
   },

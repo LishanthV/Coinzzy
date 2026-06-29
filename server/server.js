@@ -1,61 +1,76 @@
-require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
+const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const mysql = require('mysql2/promise');
+require('dotenv').config();
+const { validate, schemas } = require('./validation');
+
+const cors = require('cors');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
-const JWT_SECRET = process.env.JWT_SECRET || 'coinzy_secret_key_12345';
-
-// Enable CORS & JSON parsing
 app.use(cors());
 app.use(express.json());
 
-// MySQL Connection Details (without database name first)
-const dbConfig = {
-  host: process.env.DB_HOST || '127.0.0.1',
+// ─────────────────────────────────────────────────────────────────────────────
+// DB Pool
+// ─────────────────────────────────────────────────────────────────────────────
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
-  port: Number(process.env.DB_PORT) || 3306,
-};
-const DB_NAME = process.env.DB_NAME || 'coinzy_db';
-
-console.log('[Database Debug] Configuration:', {
-  host: dbConfig.host,
-  user: dbConfig.user,
-  passwordLength: dbConfig.password ? dbConfig.password.length : 0,
-  port: dbConfig.port,
-  DB_NAME
+  database: process.env.DB_NAME || 'coinzy_db',
+  waitForConnections: true,
+  connectionLimit: 10,
 });
 
-let pool;
+// ─────────────────────────────────────────────────────────────────────────────
+// Token helpers
+// ─────────────────────────────────────────────────────────────────────────────
+const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'coinzy_access_secret_change_me';
+const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'coinzy_refresh_secret_change_me';
 
-// Test connection, auto-create database & run schema check on startup
-(async () => {
+// Short-lived access token — 15 minutes
+function generateAccessToken(userId) {
+  return jwt.sign({ userId }, ACCESS_SECRET, { expiresIn: '15m' });
+}
+
+// Long-lived refresh token — 30 days
+function generateRefreshToken(userId) {
+  return jwt.sign({ userId }, REFRESH_SECRET, { expiresIn: '30d' });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auth middleware — verifies access token only
+// ─────────────────────────────────────────────────────────────────────────────
+async function authenticate(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Missing token' });
+  }
+  const token = authHeader.split(' ')[1];
   try {
-    console.log('[Database] Connecting to MySQL server to check database...');
-    // 1. Establish single connection to create database if not exists
-    const tempConnection = await mysql.createConnection(dbConfig);
-    await tempConnection.query(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\``);
-    await tempConnection.end();
-    console.log(`[Database] Verified/Created MySQL database: "${DB_NAME}"`);
+    const decoded = jwt.verify(token, ACCESS_SECRET);
+    req.userId = decoded.userId;
+    next();
+  } catch (err) {
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Token expired', code: 'TOKEN_EXPIRED' });
+    }
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+}
 
-    // 2. Initialize connection pool with database selected
-    pool = mysql.createPool({
-      ...dbConfig,
-      database: DB_NAME,
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0,
-    });
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto-migration on startup
+// ─────────────────────────────────────────────────────────────────────────────
+async function runMigrations() {
+  const conn = await pool.getConnection();
+  try {
+    // Core tables
+    await conn.query(`CREATE DATABASE IF NOT EXISTS coinzy_db`);
+    await conn.query(`USE coinzy_db`);
 
-    const connection = await pool.getConnection();
-    console.log(`[Database] Successfully connected pool to MySQL database: "${DB_NAME}"!`);
-    
-    // Check if database tables exist
-    await connection.query(`
+    await conn.query(`
       CREATE TABLE IF NOT EXISTS users (
         id VARCHAR(36) PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
@@ -65,536 +80,502 @@ let pool;
       )
     `);
 
-    await connection.query(`
+    await conn.query(`
       CREATE TABLE IF NOT EXISTS accounts (
         id VARCHAR(36) PRIMARY KEY,
         userId VARCHAR(36) NOT NULL,
         name VARCHAR(255) NOT NULL,
-        type VARCHAR(50) NOT NULL,
-        balance DECIMAL(15, 2) DEFAULT 0.00,
-        color VARCHAR(50) NOT NULL,
-        icon VARCHAR(50) NOT NULL,
+        type VARCHAR(50),
+        balance DECIMAL(15,2) DEFAULT 0,
+        color VARCHAR(50),
+        icon VARCHAR(50),
         FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
       )
     `);
 
-    await connection.query(`
+    await conn.query(`
       CREATE TABLE IF NOT EXISTS budgets (
         id VARCHAR(36) PRIMARY KEY,
         userId VARCHAR(36) NOT NULL,
         categoryId VARCHAR(50) NOT NULL,
-        \`limit\` DECIMAL(15, 2) NOT NULL,
+        \`limit\` DECIMAL(15,2) NOT NULL,
         period VARCHAR(20) DEFAULT 'monthly',
         FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
       )
     `);
 
-    await connection.query(`
+    await conn.query(`
       CREATE TABLE IF NOT EXISTS transactions (
         id VARCHAR(36) PRIMARY KEY,
         userId VARCHAR(36) NOT NULL,
-        accountId VARCHAR(36) NOT NULL,
-        toAccountId VARCHAR(36) DEFAULT NULL,
+        accountId VARCHAR(36),
+        toAccountId VARCHAR(36),
         type VARCHAR(20) NOT NULL,
-        amount DECIMAL(15, 2) NOT NULL,
+        amount DECIMAL(15,2) NOT NULL,
+        categoryId VARCHAR(50),
+        note TEXT,
+        date VARCHAR(50),
+        merchant VARCHAR(255),
+        customCategory VARCHAR(255),
+        items TEXT,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    // ── NEW: refresh_tokens table ──────────────────────────────────────────
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS refresh_tokens (
+        id VARCHAR(36) PRIMARY KEY,
+        userId VARCHAR(36) NOT NULL,
+        token TEXT NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    // ── NEW: savings_goals table ───────────────────────────────────────────
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS savings_goals (
+        id VARCHAR(36) PRIMARY KEY,
+        userId VARCHAR(36) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        targetAmount DECIMAL(15,2) NOT NULL,
+        currentAmount DECIMAL(15,2) DEFAULT 0,
+        targetDate VARCHAR(50) DEFAULT NULL,
+        updatedAt BIGINT NOT NULL DEFAULT 0,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    // ── NEW: recurring_transactions table ──────────────────────────────────
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS recurring_transactions (
+        id VARCHAR(36) PRIMARY KEY,
+        userId VARCHAR(36) NOT NULL,
+        accountId VARCHAR(36) NOT NULL,
+        type VARCHAR(20) NOT NULL,
+        amount DECIMAL(15,2) NOT NULL,
         categoryId VARCHAR(50) DEFAULT NULL,
         note TEXT,
-        date VARCHAR(50) NOT NULL,
         merchant VARCHAR(255) DEFAULT NULL,
-        items TEXT,
+        frequency VARCHAR(20) NOT NULL DEFAULT 'monthly',
+        nextDueDate VARCHAR(50) NOT NULL,
+        lastProcessed VARCHAR(50) DEFAULT NULL,
+        isActive TINYINT(1) DEFAULT 1,
+        updatedAt BIGINT NOT NULL DEFAULT 0,
         FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
         FOREIGN KEY (accountId) REFERENCES accounts(id) ON DELETE CASCADE
       )
     `);
 
-    // Check if we need to run migrations on transactions table (for existing database schemas)
-    const [columns] = await connection.query(`SHOW COLUMNS FROM transactions`);
-    const columnNames = columns.map(col => col.Field);
 
-    // 1. Rename description to note if description exists and note does not
-    if (columnNames.includes('description') && !columnNames.includes('note')) {
-      console.log('[Database] Migrating: Renaming transactions.description to transactions.note...');
-      await connection.query(`ALTER TABLE transactions CHANGE description note TEXT`);
-    } else if (!columnNames.includes('note')) {
-      console.log('[Database] Migrating: Adding note column to transactions...');
-      await connection.query(`ALTER TABLE transactions ADD COLUMN note TEXT`);
+
+    // Existing column migrations
+    const [cols] = await conn.query(`SHOW COLUMNS FROM transactions`);
+    const colNames = cols.map((c) => c.Field);
+    if (colNames.includes('description') && !colNames.includes('note')) {
+      await conn.query(`ALTER TABLE transactions CHANGE description note TEXT`);
+    }
+    if (!colNames.includes('merchant')) {
+      await conn.query(`ALTER TABLE transactions ADD COLUMN merchant VARCHAR(255) DEFAULT NULL`);
+    }
+    if (!colNames.includes('customCategory')) {
+      await conn.query(`ALTER TABLE transactions ADD COLUMN customCategory VARCHAR(255) DEFAULT NULL`);
+    }
+    if (!colNames.includes('items')) {
+      await conn.query(`ALTER TABLE transactions ADD COLUMN items TEXT DEFAULT NULL`);
     }
 
-    // 2. Make categoryId nullable to support transfer transactions
-    const catCol = columns.find(col => col.Field === 'categoryId');
-    if (catCol && catCol.Null === 'NO') {
-      console.log('[Database] Migrating: Making transactions.categoryId nullable...');
-      await connection.query(`ALTER TABLE transactions MODIFY categoryId VARCHAR(50) DEFAULT NULL`);
-    }
-
-    // 3. Add merchant column if missing
-    if (!columnNames.includes('merchant')) {
-      console.log('[Database] Migrating: Adding merchant column to transactions...');
-      await connection.query(`ALTER TABLE transactions ADD COLUMN merchant VARCHAR(255) DEFAULT NULL`);
-    }
-
-    // 4. Add items column if missing
-    if (!columnNames.includes('items')) {
-      console.log('[Database] Migrating: Adding items column to transactions...');
-      await connection.query(`ALTER TABLE transactions ADD COLUMN items TEXT`);
-    }
-
-    connection.release();
-
-    // Start Express Listener after DB is initialized
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Coinzy MySQL-backed Express server is running on http://localhost:${PORT}`);
-    });
-
-  } catch (error) {
-    console.error('CRITICAL: Database initialization failed. Please make sure MySQL is running and credentials in server/.env are correct.', error.message);
-  }
-})();
-
-// Middleware: Authenticate JWT Token
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
-
-  if (!token) {
-    return res.status(401).json({ error: 'Access token required.' });
-  }
-
-  jwt.verify(token, JWT_SECRET, (err, decoded) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid or expired token.' });
-    }
-    req.userId = decoded.id;
-    next();
-  });
-}
-
-// Helper: Apply balance delta to accounts on transaction modifications
-async function adjustAccountBalance(connection, type, amount, accountId, toAccountId, sign) {
-  const delta = Number(amount) * sign;
-  
-  if (type === 'income') {
-    await connection.query('UPDATE accounts SET balance = balance + ? WHERE id = ?', [delta, accountId]);
-  } else if (type === 'expense') {
-    await connection.query('UPDATE accounts SET balance = balance - ? WHERE id = ?', [delta, accountId]);
-  } else if (type === 'transfer') {
-    await connection.query('UPDATE accounts SET balance = balance - ? WHERE id = ?', [delta, accountId]);
-    if (toAccountId) {
-      await connection.query('UPDATE accounts SET balance = balance + ? WHERE id = ?', [delta, toAccountId]);
-    }
+    console.log('✅ Migrations complete');
+  } finally {
+    conn.release();
   }
 }
 
-// ==========================================
-// AUTH ROUTES
-// ==========================================
+// ─────────────────────────────────────────────────────────────────────────────
+// Auth routes
+// ─────────────────────────────────────────────────────────────────────────────
 
-// Register User
-app.post('/api/auth/signup', async (req, res) => {
-  const { name, email, password } = req.body;
-
-  if (!name || !email || !password) {
-    return res.status(400).json({ error: 'All fields are required.' });
-  }
-
-  const emailLower = email.trim().toLowerCase();
-  
+// Register
+app.post(['/auth/register', '/api/auth/register'], validate(schemas.register), async (req, res) => {
+  const { name, email, password } = req.validated;
   try {
-    // Check if user exists
-    const [existing] = await pool.query('SELECT id FROM users WHERE email = ?', [emailLower]);
+    const [existing] = await pool.query('SELECT id FROM users WHERE email = ?', [email]);
     if (existing.length > 0) {
-      return res.status(400).json({ error: 'An account with this email already exists.' });
+      return res.status(409).json({ error: 'Email already in use' });
+    }
+    const hashed = await bcrypt.hash(password, 12);
+    const userId = require('crypto').randomUUID();
+    await pool.query('INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)', [
+      userId, name, email, hashed,
+    ]);
+
+    const accessToken = generateAccessToken(userId);
+    const refreshToken = generateRefreshToken(userId);
+    await storeRefreshToken(userId, refreshToken);
+
+    return res.status(201).json({ accessToken, refreshToken, userId, name, email });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Login
+app.post(['/auth/login', '/api/auth/login'], validate(schemas.login), async (req, res) => {
+  const { email, password } = req.validated;
+  try {
+    const [rows] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+    if (rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    const user = rows[0];
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) {
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Hash password and generate UUID
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const userId = 'usr_' + Math.random().toString(36).substring(2, 11);
+    const accessToken = generateAccessToken(user.id);
+    const refreshToken = generateRefreshToken(user.id);
+    await storeRefreshToken(user.id, refreshToken);
 
-    const connection = await pool.getConnection();
+    return res.json({
+      accessToken,
+      refreshToken,
+      userId: user.id,
+      name: user.name,
+      email: user.email,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Refresh — exchange a valid refresh token for a new access token
+app.post(['/auth/refresh', '/api/auth/refresh'], validate(schemas.refreshToken), async (req, res) => {
+  const { refreshToken } = req.validated;
+  try {
+    // Verify signature first
+    let decoded;
     try {
-      await connection.beginTransaction();
-
-      // Insert the user
-      await connection.query(
-        'INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)',
-        [userId, name.trim(), emailLower, hashedPassword]
-      );
-
-      // Create default accounts matching frontend seedData colors and icons
-      const defaultAccounts = [
-        { id: `acc_checking_${userId}`, name: 'Everyday Checking', type: 'checking', balance: 3240.55, color: '#6C6FE0', icon: 'card-outline' },
-        { id: `acc_savings_${userId}`, name: 'Savings', type: 'savings', balance: 12850.00, color: '#33C2A1', icon: 'wallet-outline' },
-        { id: `acc_credit_${userId}`, name: 'Visa Credit Card', type: 'credit', balance: -482.30, color: '#E2784E', icon: 'card' },
-        { id: `acc_cash_${userId}`, name: 'Cash', type: 'cash', balance: 120.00, color: '#E3A23C', icon: 'cash-outline' }
-      ];
-
-      for (const acc of defaultAccounts) {
-        await connection.query(
-          'INSERT INTO accounts (id, userId, name, type, balance, color, icon) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [acc.id, userId, acc.name, acc.type, acc.balance, acc.color, acc.icon]
-        );
-      }
-
-      await connection.commit();
-    } catch (err) {
-      await connection.rollback();
-      throw err;
-    } finally {
-      connection.release();
+      decoded = jwt.verify(refreshToken, REFRESH_SECRET);
+    } catch {
+      return res.status(401).json({ error: 'Invalid or expired refresh token' });
     }
 
-    // Create JWT token
-    const token = jwt.sign({ id: userId }, JWT_SECRET, { expiresIn: '30d' });
+    // Check it exists in DB and isn't expired
+    const [rows] = await pool.query(
+      'SELECT * FROM refresh_tokens WHERE userId = ? AND expires_at > NOW()',
+      [decoded.userId]
+    );
 
-    res.json({
-      success: true,
-      token,
-      user: {
-        id: userId,
-        name: name.trim(),
-        email: emailLower,
-      },
-    });
-  } catch (error) {
-    console.error('Signup Error:', error);
-    res.status(500).json({ error: 'Internal server error during registration.' });
+    // Find matching token (stored as TEXT — compare directly)
+    const match = rows.find((r) => r.token === refreshToken);
+    if (!match) {
+      return res.status(401).json({ error: 'Refresh token not recognised' });
+    }
+
+    // Rotate — delete old, issue new pair
+    await pool.query('DELETE FROM refresh_tokens WHERE id = ?', [match.id]);
+
+    const newAccessToken = generateAccessToken(decoded.userId);
+    const newRefreshToken = generateRefreshToken(decoded.userId);
+    await storeRefreshToken(decoded.userId, newRefreshToken);
+
+    return res.json({ accessToken: newAccessToken, refreshToken: newRefreshToken });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Login User
-app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
-
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required.' });
-  }
-
-  const emailLower = email.trim().toLowerCase();
-
+// Logout — invalidate the refresh token immediately
+app.post('/auth/logout', authenticate, async (req, res) => {
+  const { refreshToken } = req.body;
   try {
-    const [users] = await pool.query('SELECT * FROM users WHERE email = ?', [emailLower]);
-    if (users.length === 0) {
-      return res.status(400).json({ error: 'No account found with this email.' });
+    if (refreshToken) {
+      await pool.query('DELETE FROM refresh_tokens WHERE userId = ? AND token = ?', [
+        req.userId,
+        refreshToken,
+      ]);
     }
-
-    const user = users[0];
-    const isPasswordMatch = await bcrypt.compare(password, user.password);
-
-    if (!isPasswordMatch) {
-      return res.status(400).json({ error: 'Incorrect password. Please try again.' });
-    }
-
-    const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '30d' });
-
-    res.json({
-      success: true,
-      token,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-      },
-    });
-  } catch (error) {
-    console.error('Login Error:', error);
-    res.status(500).json({ error: 'Internal server error during login.' });
+    return res.json({ message: 'Logged out' });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 
-// ==========================================
-// ACCOUNTS ROUTES
-// ==========================================
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper — store refresh token with expiry
+// ─────────────────────────────────────────────────────────────────────────────
+async function storeRefreshToken(userId, token) {
+  const id = require('crypto').randomUUID();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+  await pool.query(
+    'INSERT INTO refresh_tokens (id, userId, token, expires_at) VALUES (?, ?, ?, ?)',
+    [id, userId, token, expiresAt]
+  );
+}
 
-app.get('/api/accounts', authenticateToken, async (req, res) => {
+// ─────────────────────────────────────────────────────────────────────────────
+// Clean up expired refresh tokens daily (simple in-process scheduler)
+// ─────────────────────────────────────────────────────────────────────────────
+setInterval(async () => {
   try {
-    const [accounts] = await pool.query('SELECT * FROM accounts WHERE userId = ?', [req.userId]);
-    const formatted = accounts.map(a => ({
-      ...a,
-      balance: Number(a.balance)
+    await pool.query('DELETE FROM refresh_tokens WHERE expires_at < NOW()');
+    console.log('🧹 Expired refresh tokens cleaned');
+  } catch (err) {
+    console.error('Cleanup error:', err);
+  }
+}, 24 * 60 * 60 * 1000);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Your existing protected routes — all use `authenticate` middleware
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Accounts
+app.get(['/accounts', '/api/accounts'], authenticate, async (req, res) => {
+  const [rows] = await pool.query('SELECT * FROM accounts WHERE userId = ?', [req.userId]);
+  res.json(rows);
+});
+
+app.post(['/accounts', '/api/accounts'], authenticate, validate(schemas.account), async (req, res) => {
+  const { id, name, type, balance, color, icon } = req.validated;
+  await pool.query(
+    'INSERT INTO accounts (id, userId, name, type, balance, color, icon) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, req.userId, name, type, balance, color, icon]
+  );
+  res.status(201).json({ id });
+});
+
+// Transactions
+app.get(['/transactions', '/api/transactions'], authenticate, async (req, res) => {
+  const [rows] = await pool.query(
+    'SELECT * FROM transactions WHERE userId = ? ORDER BY date DESC',
+    [req.userId]
+  );
+  res.json(rows);
+});
+
+app.post(['/transactions', '/api/transactions'], authenticate, validate(schemas.transaction), async (req, res) => {
+  const { id, accountId, toAccountId, type, amount, categoryId, note, date, merchant, customCategory, items } = req.validated;
+  await pool.query(
+    `INSERT INTO transactions 
+     (id, userId, accountId, toAccountId, type, amount, categoryId, note, date, merchant, customCategory, items) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, req.userId, accountId, toAccountId, type, amount, categoryId, note, date, merchant, customCategory, items]
+  );
+  res.status(201).json({ id });
+});
+
+app.delete(['/transactions/:id', '/api/transactions/:id'], authenticate, async (req, res) => {
+  await pool.query('DELETE FROM transactions WHERE id = ? AND userId = ?', [
+    req.params.id,
+    req.userId,
+  ]);
+  res.json({ deleted: true });
+});
+
+// Budgets
+app.get(['/budgets', '/api/budgets'], authenticate, async (req, res) => {
+  const [rows] = await pool.query('SELECT * FROM budgets WHERE userId = ?', [req.userId]);
+  res.json(rows);
+});
+
+app.post(['/budgets', '/api/budgets'], authenticate, validate(schemas.budget), async (req, res) => {
+  const { id, categoryId, limit, period } = req.validated;
+  await pool.query(
+    'INSERT INTO budgets (id, userId, categoryId, `limit`, period) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE `limit` = VALUES(`limit`)',
+    [id, req.userId, categoryId, limit, period]
+  );
+  res.status(201).json({ id });
+});
+
+// User profile
+app.get(['/user', '/api/user'], authenticate, async (req, res) => {
+  const [rows] = await pool.query('SELECT id, name, email, created_at FROM users WHERE id = ?', [req.userId]);
+  if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+  res.json(rows[0]);
+});
+
+// Savings Goals
+app.get(['/goals', '/api/goals'], authenticate, async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM savings_goals WHERE userId = ? ORDER BY updatedAt DESC', [req.userId]);
+    const formatted = rows.map(g => ({
+      ...g,
+      targetAmount: Number(g.targetAmount),
+      currentAmount: Number(g.currentAmount)
     }));
     res.json(formatted);
-  } catch (error) {
-    console.error('Fetch Accounts Error:', error);
-    res.status(500).json({ error: 'Failed to fetch accounts.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-app.post('/api/accounts', authenticateToken, async (req, res) => {
-  const { id, name, type, balance, color, icon } = req.body;
-
-  if (!id || !name || !type || !color || !icon) {
-    return res.status(400).json({ error: 'Missing required account fields.' });
-  }
-
+app.post(['/goals', '/api/goals'], authenticate, validate(schemas.savingsGoal), async (req, res) => {
+  const { id, name, targetAmount, currentAmount, targetDate } = req.validated;
+  const cleanId = id || require('crypto').randomUUID();
+  const now = Date.now();
   try {
     await pool.query(
-      'INSERT INTO accounts (id, userId, name, type, balance, color, icon) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [id, req.userId, name, type, balance || 0.0, color, icon]
+      `INSERT INTO savings_goals 
+        (id, userId, name, targetAmount, currentAmount, targetDate, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        name = VALUES(name), 
+        targetAmount = VALUES(targetAmount), 
+        currentAmount = VALUES(currentAmount), 
+        targetDate = VALUES(targetDate), 
+        updatedAt = VALUES(updatedAt)`,
+      [cleanId, req.userId, name, targetAmount, currentAmount || 0, targetDate || null, now]
     );
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Create Account Error:', error);
-    res.status(500).json({ error: 'Failed to create account.' });
+    res.status(201).json({ id: cleanId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-// ==========================================
-// BUDGETS ROUTES
-// ==========================================
-
-app.get('/api/budgets', authenticateToken, async (req, res) => {
+app.delete(['/goals/:id', '/api/goals/:id'], authenticate, async (req, res) => {
   try {
-    const [budgets] = await pool.query('SELECT * FROM budgets WHERE userId = ?', [req.userId]);
-    const formatted = budgets.map(b => ({
-      ...b,
-      limit: Number(b.limit)
-    }));
-    res.json(formatted);
-  } catch (error) {
-    console.error('Fetch Budgets Error:', error);
-    res.status(500).json({ error: 'Failed to fetch budgets.' });
+    await pool.query('DELETE FROM savings_goals WHERE id = ? AND userId = ?', [
+      req.params.id,
+      req.userId
+    ]);
+    res.json({ deleted: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-app.post('/api/budgets', authenticateToken, async (req, res) => {
-  const { id, categoryId, limit, period } = req.body;
-
-  if (!id || !categoryId || limit === undefined) {
-    return res.status(400).json({ error: 'Missing required budget fields.' });
-  }
-
+// Recurring Transactions
+app.get(['/recurring', '/api/recurring'], authenticate, async (req, res) => {
   try {
-    // Check if category budget already exists
-    const [existing] = await pool.query(
-      'SELECT id FROM budgets WHERE userId = ? AND categoryId = ?',
-      [req.userId, categoryId]
-    );
-
-    if (existing.length > 0) {
-      await pool.query(
-        'UPDATE budgets SET `limit` = ? WHERE userId = ? AND categoryId = ?',
-        [limit, req.userId, categoryId]
-      );
-    } else {
-      await pool.query(
-        'INSERT INTO budgets (id, userId, categoryId, `limit`, period) VALUES (?, ?, ?, ?, ?)',
-        [id, req.userId, categoryId, limit, period || 'monthly']
-      );
-    }
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Upsert Budget Error:', error);
-    res.status(500).json({ error: 'Failed to save budget.' });
-  }
-});
-
-app.delete('/api/budgets/:categoryId', authenticateToken, async (req, res) => {
-  const { categoryId } = req.params;
-
-  try {
-    await pool.query('DELETE FROM budgets WHERE userId = ? AND categoryId = ?', [req.userId, categoryId]);
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Delete Budget Error:', error);
-    res.status(500).json({ error: 'Failed to delete budget.' });
-  }
-});
-
-// ==========================================
-// TRANSACTIONS ROUTES
-// ==========================================
-
-app.get('/api/transactions', authenticateToken, async (req, res) => {
-  try {
-    const [transactions] = await pool.query(
-      'SELECT * FROM transactions WHERE userId = ? ORDER BY date DESC',
+    const [rules] = await pool.query(
+      'SELECT * FROM recurring_transactions WHERE userId = ? AND isActive = 1 ORDER BY nextDueDate ASC',
       [req.userId]
     );
-    const formatted = transactions.map(t => ({
-      ...t,
-      amount: Number(t.amount),
-      note: t.note !== undefined ? t.note : (t.description || ''),
-      items: typeof t.items === 'string' ? JSON.parse(t.items) : (t.items || [])
-    }));
+    const formatted = rules.map(r => ({ ...r, amount: Number(r.amount) }));
     res.json(formatted);
   } catch (error) {
-    console.error('Fetch Transactions Error:', error);
-    res.status(500).json({ error: 'Failed to fetch transactions.' });
+    console.error('Fetch Recurring Error:', error);
+    res.status(500).json({ error: 'Failed to fetch recurring transactions.' });
   }
 });
 
-app.post('/api/transactions', authenticateToken, async (req, res) => {
-  const { id, accountId, toAccountId, type, amount, categoryId, note, description, date, merchant, items } = req.body;
-
-  if (!id || !accountId || !type || amount === undefined || !date) {
-    return res.status(400).json({ error: 'Missing required transaction fields.' });
-  }
-  if (type !== 'transfer' && !categoryId) {
-    return res.status(400).json({ error: 'Missing category for non-transfer transaction.' });
-  }
-
-  const connection = await pool.getConnection();
+app.post(['/recurring', '/api/recurring'], authenticate, validate(schemas.recurringTransaction), async (req, res) => {
+  const { id, accountId, type, amount, categoryId, note, merchant, frequency, nextDueDate } = req.validated;
+  const cleanId = id || ('rec_' + Math.random().toString(36).substring(2, 11));
   try {
-    await connection.beginTransaction();
-
-    const noteVal = note !== undefined ? note : (description || '');
-    const itemsVal = items ? (typeof items === 'string' ? items : JSON.stringify(items)) : '[]';
-    const merchantVal = merchant || null;
-
-    // Insert transaction
-    await connection.query(
-      'INSERT INTO transactions (id, userId, accountId, toAccountId, type, amount, categoryId, note, date, merchant, items) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    const [accCheck] = await pool.query('SELECT userId FROM accounts WHERE id = ?', [accountId]);
+    if (accCheck.length === 0 || accCheck[0].userId !== req.userId) {
+      return res.status(403).json({ error: 'Account does not belong to this user.' });
+    }
+    await pool.query(
+      `INSERT INTO recurring_transactions 
+        (id, userId, accountId, type, amount, categoryId, note, merchant, frequency, nextDueDate, isActive, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+       ON DUPLICATE KEY UPDATE
+        amount=?, categoryId=?, note=?, merchant=?, frequency=?, nextDueDate=?, isActive=1, updatedAt=?`,
       [
-        id,
-        req.userId,
-        accountId,
-        type === 'transfer' ? toAccountId : null,
-        type,
-        amount,
-        type === 'transfer' ? null : categoryId,
-        noteVal,
-        date,
-        merchantVal,
-        itemsVal
+        cleanId, req.userId, accountId, type, amount,
+        categoryId || null, note || '', merchant || '',
+        frequency, nextDueDate, Date.now(),
+        amount, categoryId || null, note || '', merchant || '',
+        frequency, nextDueDate, Date.now()
       ]
     );
-
-    // Adjust balance (Add transaction delta)
-    await adjustAccountBalance(connection, type, amount, accountId, toAccountId, 1);
-
-    await connection.commit();
-    res.json({ success: true });
+    res.json({ success: true, id: cleanId });
   } catch (error) {
-    await connection.rollback();
-    console.error('Create Transaction Error:', error);
-    res.status(500).json({ error: 'Failed to log transaction.' });
-  } finally {
-    connection.release();
+    console.error('Create Recurring Error:', error);
+    res.status(500).json({ error: 'Failed to create recurring transaction.' });
   }
 });
 
-app.put('/api/transactions/:id', authenticateToken, async (req, res) => {
-  const { id } = req.params;
-  const { accountId, toAccountId, type, amount, categoryId, note, description, date, merchant, items } = req.body;
-
-  const connection = await pool.getConnection();
+app.delete(['/recurring/:id', '/api/recurring/:id'], authenticate, async (req, res) => {
+  const cleanId = req.params.id;
   try {
-    await connection.beginTransaction();
-
-    // 1. Fetch old transaction
-    const [txns] = await connection.query('SELECT * FROM transactions WHERE id = ? AND userId = ?', [id, req.userId]);
-    if (txns.length === 0) {
-      return res.status(404).json({ error: 'Transaction not found.' });
-    }
-    const existing = txns[0];
-
-    // 2. Revert old balance delta
-    await adjustAccountBalance(connection, existing.type, existing.amount, existing.accountId, existing.toAccountId, -1);
-
-    const noteVal = note !== undefined ? note : (description || '');
-    const itemsVal = items ? (typeof items === 'string' ? items : JSON.stringify(items)) : '[]';
-    const merchantVal = merchant || null;
-
-    // 3. Update transaction details
-    await connection.query(
-      'UPDATE transactions SET accountId = ?, toAccountId = ?, type = ?, amount = ?, categoryId = ?, note = ?, date = ?, merchant = ?, items = ? WHERE id = ?',
-      [
-        accountId,
-        type === 'transfer' ? toAccountId : null,
-        type,
-        amount,
-        type === 'transfer' ? null : categoryId,
-        noteVal,
-        date,
-        merchantVal,
-        itemsVal,
-        id
-      ]
+    await pool.query(
+      'UPDATE recurring_transactions SET isActive = 0 WHERE id = ? AND userId = ?',
+      [cleanId, req.userId]
     );
-
-    // 4. Apply new balance delta
-    await adjustAccountBalance(connection, type, amount, accountId, toAccountId, 1);
-
-    await connection.commit();
     res.json({ success: true });
   } catch (error) {
-    await connection.rollback();
-    console.error('Update Transaction Error:', error);
-    res.status(500).json({ error: 'Failed to update transaction.' });
-  } finally {
-    connection.release();
+    console.error('Delete Recurring Error:', error);
+    res.status(500).json({ error: 'Failed to delete recurring transaction.' });
   }
 });
 
-app.delete('/api/transactions/:id', authenticateToken, async (req, res) => {
-  const { id } = req.params;
-
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
-
-    // 1. Fetch transaction
-    const [txns] = await connection.query('SELECT * FROM transactions WHERE id = ? AND userId = ?', [id, req.userId]);
-    if (txns.length === 0) {
-      return res.status(404).json({ error: 'Transaction not found.' });
-    }
-    const existing = txns[0];
-
-    // 2. Revert balance delta (Subtract transaction delta)
-    await adjustAccountBalance(connection, existing.type, existing.amount, existing.accountId, existing.toAccountId, -1);
-
-    // 3. Delete from DB
-    await connection.query('DELETE FROM transactions WHERE id = ?', [id]);
-
-    await connection.commit();
-    res.json({ success: true });
-  } catch (error) {
-    await connection.rollback();
-    console.error('Delete Transaction Error:', error);
-    res.status(500).json({ error: 'Failed to delete transaction.' });
-  } finally {
-    connection.release();
+async function adjustAccountBalance(connection, type, amount, accountId, toAccountId, sign) {
+  let delta = 0;
+  if (type === 'income') delta = amount;
+  if (type === 'expense') delta = -amount;
+  if (type === 'transfer') {
+    await connection.query('UPDATE accounts SET balance = balance - ? WHERE id = ?', [amount, accountId]);
+    await connection.query('UPDATE accounts SET balance = balance + ? WHERE id = ?', [amount, toAccountId]);
+  } else {
+    await connection.query('UPDATE accounts SET balance = balance + ? WHERE id = ?', [delta * sign, accountId]);
   }
-});
+}
 
-// ==========================================
-// DATA RESETS
-// ==========================================
-
-app.post('/api/data/reset', authenticateToken, async (req, res) => {
+app.post(['/recurring/process', '/api/recurring/process'], authenticate, async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-
-    const userId = req.userId;
-
-    // Delete user's accounts, budgets, and transactions
-    await connection.query('DELETE FROM transactions WHERE userId = ?', [userId]);
-    await connection.query('DELETE FROM budgets WHERE userId = ?', [userId]);
-    await connection.query('DELETE FROM accounts WHERE userId = ?', [userId]);
-
-    // Recreate default accounts matching frontend seedData with 0 balance
-    const defaultAccounts = [
-      { id: `acc_checking_${userId}`, name: 'Everyday Checking', type: 'checking', balance: 0.00, color: '#6C6FE0', icon: 'card-outline' },
-      { id: `acc_savings_${userId}`, name: 'Savings', type: 'savings', balance: 0.00, color: '#33C2A1', icon: 'wallet-outline' },
-      { id: `acc_credit_${userId}`, name: 'Visa Credit Card', type: 'credit', balance: 0.00, color: '#E2784E', icon: 'card' },
-      { id: `acc_cash_${userId}`, name: 'Cash', type: 'cash', balance: 0.00, color: '#E3A23C', icon: 'cash-outline' }
-    ];
-
-    for (const acc of defaultAccounts) {
+    const [due] = await connection.query(
+      `SELECT * FROM recurring_transactions WHERE userId = ? AND isActive = 1 AND nextDueDate <= ?`,
+      [req.userId, today]
+    );
+    const created = [];
+    for (const rule of due) {
+      const txnId = 'txn_' + Math.random().toString(36).substring(2, 11);
+      const now = Date.now();
       await connection.query(
-        'INSERT INTO accounts (id, userId, name, type, balance, color, icon) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [acc.id, userId, acc.name, acc.type, acc.balance, acc.color, acc.icon]
+        `INSERT INTO transactions (id, userId, accountId, type, amount, categoryId, note, merchant, date, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [txnId, req.userId, rule.accountId, rule.type, rule.amount, rule.categoryId, rule.note, rule.merchant, new Date().toISOString(), now]
       );
+      await adjustAccountBalance(connection, rule.type, rule.amount, rule.accountId, null, 1);
+      const next = new Date(rule.nextDueDate);
+      if (rule.frequency === 'daily') next.setDate(next.getDate() + 1);
+      else if (rule.frequency === 'weekly') next.setDate(next.getDate() + 7);
+      else if (rule.frequency === 'monthly') next.setMonth(next.getMonth() + 1);
+      else if (rule.frequency === 'yearly') next.setFullYear(next.getFullYear() + 1);
+      const nextDueDate = next.toISOString().slice(0, 10);
+      await connection.query(
+        `UPDATE recurring_transactions SET nextDueDate = ?, lastProcessed = ?, updatedAt = ? WHERE id = ?`,
+        [nextDueDate, today, Date.now(), rule.id]
+      );
+      created.push({ txnId, ruleId: rule.id, amount: rule.amount, type: rule.type });
     }
-
     await connection.commit();
-    res.json({ success: true });
+    res.json({ success: true, processed: created.length, transactions: created });
   } catch (error) {
     await connection.rollback();
-    console.error('Reset Data Error:', error);
-    res.status(500).json({ error: 'Failed to reset data.' });
+    console.error('Process Recurring Error:', error);
+    res.status(500).json({ error: 'Failed to process recurring transactions.' });
   } finally {
     connection.release();
   }
 });
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Start
+// ─────────────────────────────────────────────────────────────────────────────
+const PORT = process.env.PORT || 3000;
+runMigrations()
+  .then(() => {
+    app.listen(PORT, () => console.log(`🚀 Coinzy server running on port ${PORT}`));
+  })
+  .catch((err) => {
+    console.error('❌ Migration failed:', err);
+    process.exit(1);
+  });

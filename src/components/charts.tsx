@@ -31,7 +31,7 @@ export function RingGauge({
   return (
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
       <Svg width={size} height={size}>
-        <G rotation="-90" origin={`${size / 2}, ${size / 2}`}>
+        <G transform={`rotate(-90 ${size / 2} ${size / 2})`}>
           <Circle
             cx={size / 2}
             cy={size / 2}
@@ -85,7 +85,7 @@ export function DonutChart({
   let cumulative = 0;
   return (
     <Svg width={size} height={size}>
-      <G rotation="-90" origin={`${size / 2}, ${size / 2}`}>
+      <G transform={`rotate(-90 ${size / 2} ${size / 2})`}>
         {data.map((slice, i) => {
           const fraction = slice.value / total;
           const dash = circumference * fraction;

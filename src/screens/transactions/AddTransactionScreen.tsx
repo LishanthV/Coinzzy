@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, View, Pressable } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,6 +13,7 @@ import { currencySymbol } from '../../utils/format';
 import { RootStackParamList } from '../../navigation/types';
 import { TxnType } from '../../types';
 import * as ImagePicker from 'expo-image-picker';
+import { scanReceiptImage } from '../../utils/scanReceipt';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'AddTransaction'>;
 type Route = RouteProp<RootStackParamList, 'AddTransaction'>;
@@ -21,75 +22,6 @@ const TYPES: { id: TxnType; label: string; color: string }[] = [
   { id: 'expense', label: 'Expense', color: colors.expense },
   { id: 'income', label: 'Income', color: colors.income },
   { id: 'transfer', label: 'Transfer', color: colors.transfer },
-];
-
-interface ReceiptTemplate {
-  merchant: string;
-  amount: number;
-  categoryId: string;
-  items: { name: string; price: number }[];
-}
-
-const RECEIPT_TEMPLATES: ReceiptTemplate[] = [
-  {
-    merchant: 'Starbucks Coffee',
-    amount: 8.75,
-    categoryId: 'cat_dining',
-    items: [
-      { name: 'Caffè Latte', price: 5.50 },
-      { name: 'Butter Croissant', price: 3.25 },
-    ],
-  },
-  {
-    merchant: 'Whole Foods Market',
-    amount: 64.20,
-    categoryId: 'cat_groceries',
-    items: [
-      { name: 'Organic Milk', price: 6.99 },
-      { name: 'Fresh Strawberries', price: 4.50 },
-      { name: 'Avocados (Bag)', price: 8.99 },
-      { name: 'Organic Chicken Breast', price: 18.50 },
-      { name: 'Artisanal Bread', price: 6.50 },
-      { name: 'Granola Cereal', price: 7.20 },
-      { name: 'Greek Yogurt (4x)', price: 11.52 },
-    ],
-  },
-  {
-    merchant: 'Chevron Gas Station',
-    amount: 45.00,
-    categoryId: 'cat_transport',
-    items: [
-      { name: 'Regular Unleaded (Fuel)', price: 45.00 },
-    ],
-  },
-  {
-    merchant: 'Apple Store',
-    amount: 129.00,
-    categoryId: 'cat_shopping',
-    items: [
-      { name: 'Apple Leather Wallet with MagSafe', price: 59.00 },
-      { name: 'AirTag 2-Pack', price: 70.00 },
-    ],
-  },
-  {
-    merchant: 'Walgreens Pharmacy',
-    amount: 24.50,
-    categoryId: 'cat_health',
-    items: [
-      { name: 'Allergy Relief Capsules', price: 14.50 },
-      { name: 'Hand Sanitizer', price: 3.50 },
-      { name: 'Tissues (Multipack)', price: 6.50 },
-    ],
-  },
-  {
-    merchant: 'AMC Cinema',
-    amount: 32.00,
-    categoryId: 'cat_entertainment',
-    items: [
-      { name: 'Movie Ticket (Standard)', price: 16.00 },
-      { name: 'Large Popcorn Combo', price: 16.00 },
-    ],
-  },
 ];
 
 export default function AddTransactionScreen() {
@@ -113,6 +45,7 @@ export default function AddTransactionScreen() {
   const [accountId, setAccountId] = useState(existing?.accountId ?? accounts[0]?.id);
   const [toAccountId, setToAccountId] = useState(existing?.toAccountId ?? accounts[1]?.id ?? accounts[0]?.id);
   const [categoryId, setCategoryId] = useState(existing?.categoryId);
+  const [customCategory, setCustomCategory] = useState(existing?.customCategory ?? '');
   const [error, setError] = useState('');
 
   // Receipt Scanner states
@@ -120,11 +53,28 @@ export default function AddTransactionScreen() {
   const [showScanOptions, setShowScanOptions] = useState(false);
   const [customMerchant, setCustomMerchant] = useState('');
   const [customAmount, setCustomAmount] = useState('');
-  const [customItems, setCustomItems] = useState(''); // Comma-separated like "Milk: 5.99, Bread: 3.50"
+  const [customItems, setCustomItems] = useState('');
 
   // Saved Scan Details
   const [scannedMerchant, setScannedMerchant] = useState<string | undefined>(existing?.merchant);
   const [scannedItems, setScannedItems] = useState<{ name: string; price: number; quantity?: number }[]>(existing?.items ?? []);
+
+  const availableCategories = useMemo(
+    () => categories.filter((c) => c.type === (type === 'income' ? 'income' : 'expense')),
+    [categories, type]
+  );
+
+  // Keep a sensible default category selected when switching type.
+  React.useEffect(() => {
+    if (type === 'transfer') {
+      setCategoryId(undefined);
+      return;
+    }
+    if (!availableCategories.find((c) => c.id === categoryId)) {
+      setCategoryId(availableCategories[0]?.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type]);
 
   const handleScanReceipt = () => {
     setShowScanOptions(true);
@@ -133,6 +83,48 @@ export default function AddTransactionScreen() {
   const startScan = async (useCamera: boolean) => {
     setShowScanOptions(false);
     try {
+      const amtVal = parseFloat(customAmount);
+      const hasCustom = customMerchant.trim() !== '' && !isNaN(amtVal) && amtVal > 0;
+      
+      if (hasCustom) {
+        setIsScanning(true);
+        // Simulate scanning delay
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        
+        setIsScanning(false);
+        setType('expense');
+        setAmount(amtVal.toFixed(2));
+        setNote(customMerchant.trim());
+        setScannedMerchant(customMerchant.trim());
+        
+        let itemsList: { name: string; price: number; quantity: number }[] = [];
+        if (customItems.trim() !== '') {
+          itemsList = customItems.split(',').map(item => {
+            const parts = item.split(':');
+            const name = parts[0]?.trim();
+            const priceStr = parts[1]?.trim();
+            if (name && priceStr) {
+              const price = parseFloat(priceStr);
+              if (!isNaN(price)) {
+                return { name, price, quantity: 1 };
+              }
+            }
+            return null;
+          }).filter(x => x !== null) as { name: string; price: number; quantity: number }[];
+        }
+        
+        if (itemsList.length === 0) {
+          itemsList = [{ name: `${customMerchant.trim()} Purchase`, price: amtVal, quantity: 1 }];
+        }
+        setScannedItems(itemsList);
+        setCategoryId('cat_other_exp');
+        
+        setCustomMerchant('');
+        setCustomAmount('');
+        setCustomItems('');
+        return;
+      }
+
       let result;
       if (useCamera) {
         const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -160,86 +152,35 @@ export default function AddTransactionScreen() {
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         setIsScanning(true);
-        setTimeout(() => {
-          setIsScanning(false);
-          
-          const amtVal = parseFloat(customAmount);
-          const hasCustom = customMerchant.trim() !== '' && !isNaN(amtVal) && amtVal > 0;
-          
-          // Parse custom items input
-          let itemsList: { name: string; price: number }[] = [];
-          if (customItems.trim() !== '') {
-            itemsList = customItems.split(',').map(item => {
-              const parts = item.split(':');
-              const name = parts[0]?.trim();
-              const priceStr = parts[1]?.trim();
-              if (name && priceStr) {
-                const price = parseFloat(priceStr);
-                if (!isNaN(price)) {
-                  return { name, price };
-                }
-              }
-              return null;
-            }).filter(x => x !== null) as { name: string; price: number }[];
-          }
-          
-          if (hasCustom) {
-            setType('expense');
-            setAmount(amtVal.toFixed(2));
-            setNote(customMerchant.trim());
-            setScannedMerchant(customMerchant.trim());
-            
-            // If itemsList is empty, create a placeholder matching the amount
-            if (itemsList.length === 0) {
-              itemsList = [{ name: `${customMerchant.trim()} Purchase`, price: amtVal }];
-            }
-            setScannedItems(itemsList);
-            
-            const matchedCat = categories.find(c => 
-              c.type === 'expense' && 
-              (c.name.toLowerCase().includes(customMerchant.toLowerCase()) || 
-               customMerchant.toLowerCase().includes(c.name.toLowerCase()))
-            );
-            setCategoryId(matchedCat?.id ?? 'cat_other_exp');
-          } else {
-            // Pick a template randomly
-            const template = RECEIPT_TEMPLATES[Math.floor(Math.random() * RECEIPT_TEMPLATES.length)];
-            setType('expense');
-            setAmount(template.amount.toFixed(2));
-            setNote(template.merchant);
-            setScannedMerchant(template.merchant);
-            setScannedItems(template.items);
-            setCategoryId(template.categoryId);
-          }
-          
-          setCustomMerchant('');
-          setCustomAmount('');
-          setCustomItems('');
-          setError('');
-        }, 2000);
+        const photoUri = result.assets[0].uri;
+
+        console.log('[Receipt Scanner] Recognizing text on-device via Tesseract...');
+        const ocrResult = await scanReceiptImage(photoUri);
+        
+        setIsScanning(false);
+        setType('expense');
+        
+        const finalMerchant = ocrResult.merchant || 'Scanned Receipt';
+        const finalAmount = ocrResult.amount || 0;
+        
+        setAmount(finalAmount > 0 ? finalAmount.toFixed(2) : '');
+        setNote(finalMerchant);
+        setScannedMerchant(finalMerchant);
+        setScannedItems(ocrResult.items || []);
+        
+        const matchedCat = categories.find(c => 
+          c.type === 'expense' && 
+          (c.name.toLowerCase().includes(finalMerchant.toLowerCase()) || 
+           finalMerchant.toLowerCase().includes(c.name.toLowerCase()))
+        );
+        setCategoryId(matchedCat?.id ?? 'cat_other_exp');
       }
     } catch (e) {
-      console.error(e);
+      console.error('[Receipt Scanner] Scanning failed:', e);
+      setIsScanning(false);
       alert('Scanning failed.');
     }
   };
-
-  const availableCategories = useMemo(
-    () => categories.filter((c) => c.type === (type === 'income' ? 'income' : 'expense')),
-    [categories, type]
-  );
-
-  // Keep a sensible default category selected when switching type.
-  React.useEffect(() => {
-    if (type === 'transfer') {
-      setCategoryId(undefined);
-      return;
-    }
-    if (!availableCategories.find((c) => c.id === categoryId)) {
-      setCategoryId(availableCategories[0]?.id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type]);
 
   const onSubmit = () => {
     const value = parseFloat(amount);
@@ -260,12 +201,14 @@ export default function AddTransactionScreen() {
       return;
     }
 
+    const isOther = categoryId === 'cat_other_exp' || categoryId === 'cat_other_inc';
     const payload = {
       type,
       amount: value,
       accountId,
       toAccountId: type === 'transfer' ? toAccountId : undefined,
       categoryId: type === 'transfer' ? undefined : categoryId,
+      customCategory: (type !== 'transfer' && isOther) ? customCategory.trim() : undefined,
       note: note.trim(),
       date: existing?.date ?? new Date().toISOString(),
       merchant: type === 'expense' ? scannedMerchant : undefined,
@@ -437,6 +380,14 @@ export default function AddTransactionScreen() {
                 })}
               </View>
             </ScrollView>
+            {(categoryId === 'cat_other_exp' || categoryId === 'cat_other_inc') && (
+              <FormInput
+                label="Specify Category or Product Name"
+                placeholder="e.g. Cinema, Gift, Books"
+                value={customCategory}
+                onChangeText={setCustomCategory}
+              />
+            )}
           </>
         )}
 
@@ -451,7 +402,7 @@ export default function AddTransactionScreen() {
           <View style={styles.scanPopupCard}>
             <ActivityIndicator size="large" color={colors.primary} />
             <Text style={styles.scanTitle}>Analyzing Receipt...</Text>
-            <Text style={styles.scanSubtitle}>Noting merchant & itemized pricing</Text>
+            <Text style={styles.scanSubtitle}>Recognizing text on-device via Tesseract</Text>
             <View style={styles.scanVisualBox}>
               <View style={styles.scanLine} />
             </View>

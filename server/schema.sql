@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     balance DECIMAL(15, 2) DEFAULT 0.00,
     color VARCHAR(50) NOT NULL,
     icon VARCHAR(50) NOT NULL,
+    currency VARCHAR(3) NOT NULL DEFAULT 'INR',
+    updatedAt BIGINT NOT NULL DEFAULT 0,
     FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -31,6 +33,7 @@ CREATE TABLE IF NOT EXISTS budgets (
     categoryId VARCHAR(50) NOT NULL,
     `limit` DECIMAL(15, 2) NOT NULL,
     period VARCHAR(20) DEFAULT 'monthly',
+    updatedAt BIGINT NOT NULL DEFAULT 0,
     FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -46,7 +49,47 @@ CREATE TABLE IF NOT EXISTS transactions (
     note TEXT,
     date VARCHAR(50) NOT NULL,
     merchant VARCHAR(255) DEFAULT NULL,  -- For scanned receipts
-    items TEXT,                          -- JSON string for itemized receipt lines
+    customCategory VARCHAR(255) DEFAULT NULL,
+    updatedAt BIGINT NOT NULL DEFAULT 0,
     FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (accountId) REFERENCES accounts(id) ON DELETE CASCADE
 );
+
+-- 5. Transaction Items Table (Normalized receipt lines)
+CREATE TABLE IF NOT EXISTS transaction_items (
+    id VARCHAR(36) PRIMARY KEY,
+    transactionId VARCHAR(36) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    price DECIMAL(15, 2) NOT NULL,
+    quantity INT DEFAULT 1,
+    FOREIGN KEY (transactionId) REFERENCES transactions(id) ON DELETE CASCADE
+);
+
+-- 6. Refresh Tokens Table
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id VARCHAR(36) PRIMARY KEY,
+    userId VARCHAR(36) NOT NULL,
+    token VARCHAR(512) UNIQUE NOT NULL,
+    expiresAt DATETIME NOT NULL,
+    createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- 7. Invalidated Stateless Tokens (Blocklist)
+CREATE TABLE IF NOT EXISTS invalid_tokens (
+    token VARCHAR(512) PRIMARY KEY,
+    invalidatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 8. Savings Goals Table
+CREATE TABLE IF NOT EXISTS savings_goals (
+    id VARCHAR(36) PRIMARY KEY,
+    userId VARCHAR(36) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    targetAmount DECIMAL(15, 2) NOT NULL,
+    currentAmount DECIMAL(15, 2) DEFAULT 0.00,
+    targetDate VARCHAR(50) DEFAULT NULL,
+    updatedAt BIGINT NOT NULL DEFAULT 0,
+    FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+);
+

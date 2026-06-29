@@ -10,6 +10,7 @@ export interface Account {
   currency: string;
   color: string;
   icon: string;
+  updatedAt?: number;
 }
 
 export interface Category {
@@ -30,7 +31,9 @@ export interface Transaction {
   note: string;
   date: string; // ISO date string
   merchant?: string;
+  customCategory?: string;
   items?: { name: string; price: number; quantity?: number }[];
+  updatedAt?: number;
 }
 
 export interface Budget {
@@ -38,6 +41,7 @@ export interface Budget {
   categoryId: string;
   limit: number;
   period: 'monthly';
+  updatedAt?: number;
 }
 
 export interface UserProfile {
@@ -52,4 +56,15 @@ export interface UserProfile {
   occupation?: string;
   maritalStatus?: string;
   sex?: string;
+  monthlyIncomeTarget?: number;
 }
+
+export interface SavingsGoal {
+  id: string;
+  name: string;
+  targetAmount: number;
+  currentAmount: number;
+  targetDate?: string;
+  updatedAt?: number;
+}
+

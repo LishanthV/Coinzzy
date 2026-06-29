@@ -11,7 +11,8 @@ import {
   ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors, fonts, fontSizes, radii, spacing } from '../theme';
+import { Ionicons } from '@expo/vector-icons';
+import { colors, fonts, fontSizes, radii, spacing, useAppTheme } from '../theme';
 
 // ── Screen container ─────────────────────────────────────────────────
 export function Screen({
@@ -25,15 +26,17 @@ export function Screen({
   style?: ViewStyle;
   contentStyle?: ViewStyle;
 }) {
+  const { colors: themeColors } = useAppTheme();
+  
   if (!scroll) {
     return (
-      <SafeAreaView style={[styles.safe, style]} edges={['top', 'left', 'right']}>
+      <SafeAreaView style={[styles.safe, { backgroundColor: themeColors.bg }, style]} edges={['top', 'left', 'right']}>
         <View style={[styles.content, contentStyle]}>{children}</View>
       </SafeAreaView>
     );
   }
   return (
-    <SafeAreaView style={[styles.safe, style]} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={[styles.safe, { backgroundColor: themeColors.bg }, style]} edges={['top', 'left', 'right']}>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.content, contentStyle]}
@@ -53,7 +56,12 @@ export function Card({
   children: React.ReactNode;
   style?: ViewStyle;
 }) {
-  return <View style={[styles.card, style]}>{children}</View>;
+  const { colors: themeColors } = useAppTheme();
+  return (
+    <View style={[styles.card, { backgroundColor: themeColors.surface, borderColor: themeColors.borderSoft }, style]}>
+      {children}
+    </View>
+  );
 }
 
 // ── Button ────────────────────────────────────────────────────────────
@@ -76,7 +84,9 @@ export function Button({
   icon?: React.ReactNode;
   style?: ViewStyle;
 }) {
-  const variantStyle = buttonVariants[variant];
+  const { colors: themeColors } = useAppTheme();
+  const variants = getButtonVariants(themeColors);
+  const variantStyle = variants[variant];
   return (
     <Pressable
       onPress={onPress}
@@ -101,24 +111,52 @@ export function Button({
   );
 }
 
-const buttonVariants: Record<ButtonVariant, { container: ViewStyle; text: { color: string } }> = {
-  primary: { container: { backgroundColor: colors.primary }, text: { color: colors.white } },
-  secondary: { container: { backgroundColor: colors.surfaceRaised }, text: { color: colors.text } },
-  ghost: { container: { backgroundColor: 'transparent' }, text: { color: colors.primary } },
-  danger: { container: { backgroundColor: colors.expenseSoft }, text: { color: colors.expense } },
-};
+const getButtonVariants = (themeColors: typeof colors): Record<ButtonVariant, { container: ViewStyle; text: { color: string } }> => ({
+  primary: { container: { backgroundColor: themeColors.primary }, text: { color: themeColors.white } },
+  secondary: { container: { backgroundColor: themeColors.surfaceRaised }, text: { color: themeColors.text } },
+  ghost: { container: { backgroundColor: 'transparent' }, text: { color: themeColors.primary } },
+  danger: { container: { backgroundColor: themeColors.expenseSoft }, text: { color: themeColors.expense } },
+});
 
 // ── Text input ────────────────────────────────────────────────────────
 export function FormInput(props: TextInputProps & { label?: string }) {
-  const { label, style, ...rest } = props;
+  const { label, style, secureTextEntry, ...rest } = props;
+  const [isSecure, setIsSecure] = React.useState(secureTextEntry);
+  const { colors: themeColors } = useAppTheme();
+
   return (
     <View style={{ marginBottom: spacing.lg }}>
-      {label ? <Text style={styles.label}>{label}</Text> : null}
-      <TextInput
-        placeholderTextColor={colors.textFaint}
-        style={[styles.input, style]}
-        {...rest}
-      />
+      {label ? <Text style={[styles.label, { color: themeColors.textMuted }]}>{label}</Text> : null}
+      <View style={styles.inputContainer}>
+        <TextInput
+          placeholderTextColor={themeColors.textFaint}
+          style={[
+            styles.input,
+            {
+              backgroundColor: themeColors.surfaceAlt,
+              borderColor: themeColors.border,
+              color: themeColors.text,
+            },
+            secureTextEntry && { paddingRight: 48 },
+            style,
+          ]}
+          secureTextEntry={isSecure}
+          {...rest}
+        />
+        {secureTextEntry ? (
+          <Pressable
+            onPress={() => setIsSecure(!isSecure)}
+            style={styles.eyeButton}
+            hitSlop={8}
+          >
+            <Ionicons
+              name={isSecure ? 'eye-off-outline' : 'eye-outline'}
+              size={20}
+              color={themeColors.textMuted}
+            />
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -133,12 +171,13 @@ export function SectionHeader({
   action?: string;
   onPressAction?: () => void;
 }) {
+  const { colors: themeColors } = useAppTheme();
   return (
     <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={[styles.sectionTitle, { color: themeColors.text }]}>{title}</Text>
       {action ? (
         <Pressable onPress={onPressAction}>
-          <Text style={styles.sectionAction}>{action}</Text>
+          <Text style={[styles.sectionAction, { color: themeColors.primary }]}>{action}</Text>
         </Pressable>
       ) : null}
     </View>
@@ -147,10 +186,11 @@ export function SectionHeader({
 
 // ── Empty state ───────────────────────────────────────────────────────
 export function EmptyState({ title, subtitle }: { title: string; subtitle?: string }) {
+  const { colors: themeColors } = useAppTheme();
   return (
     <View style={styles.emptyState}>
-      <Text style={styles.emptyTitle}>{title}</Text>
-      {subtitle ? <Text style={styles.emptySubtitle}>{subtitle}</Text> : null}
+      <Text style={[styles.emptyTitle, { color: themeColors.text }]}>{title}</Text>
+      {subtitle ? <Text style={[styles.emptySubtitle, { color: themeColors.textMuted }]}>{subtitle}</Text> : null}
     </View>
   );
 }
@@ -191,6 +231,17 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontFamily: fonts.body,
     fontSize: fontSizes.md,
+  },
+  inputContainer: {
+    position: 'relative',
+    justifyContent: 'center',
+  },
+  eyeButton: {
+    position: 'absolute',
+    right: spacing.md,
+    height: '100%',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xs,
   },
   sectionHeader: {
     flexDirection: 'row',
