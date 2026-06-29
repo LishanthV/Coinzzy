@@ -1,6 +1,9 @@
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
+
 const LOG_SERVER = __DEV__
-  ? 'http://10.224.237.42:3001/log'  // Pre-configured with your PC's local IP address
-  : null;
+  ? 'http://10.224.237.42:5000/api/logs'
+  : null; // swap with your production URL when deploying
 
 async function sendLog(level: string, message: string, extra?: Record<string, any>) {
   if (!LOG_SERVER) return;
@@ -11,6 +14,8 @@ async function sendLog(level: string, message: string, extra?: Record<string, an
       body: JSON.stringify({
         level,
         message,
+        platform: Platform.OS,
+        appVersion: Constants.expoConfig?.version || '1.0.0',
         timestamp: new Date().toISOString(),
         ...extra,
       }),
@@ -19,8 +24,8 @@ async function sendLog(level: string, message: string, extra?: Record<string, an
 }
 
 export const logger = {
-  error: (message: string, error?: any, screen?: string) =>
-    sendLog('ERROR', message, { stack: error?.stack, screen }),
+  error: (message: string, error?: any, screen?: string, userId?: number) =>
+    sendLog('ERROR', message, { stack: error?.stack, screen, userId }),
   warn: (message: string, screen?: string) =>
     sendLog('WARN', message, { screen }),
   info: (message: string) =>

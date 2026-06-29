@@ -169,6 +169,24 @@ async function runMigrations() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
+    // ── error_logs ──────────────────────────────────────────────────────────
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS error_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        level VARCHAR(10) NOT NULL DEFAULT 'ERROR',
+        message TEXT NOT NULL,
+        stack TEXT,
+        screen VARCHAR(100),
+        user_id INT,
+        app_version VARCHAR(20),
+        platform VARCHAR(10),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_level (level),
+        INDEX idx_user (user_id),
+        INDEX idx_created (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
     console.log('✅ Migrations complete');
   } finally {
     conn.release();

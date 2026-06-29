@@ -7,6 +7,7 @@ const { apiLimiter }    = require('./middleware/rateLimiter');
 const authRoutes        = require('./routes/auth');
 const transactionRoutes = require('./routes/transactions');
 const financeRoutes     = require('./routes/finance');
+const logsRoutes        = require('./routes/logs');
 const { validate, schemas } = require('./validation');
 
 const app = express();
@@ -24,11 +25,13 @@ app.get('/api/health', (req, res) => {
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
 app.use('/api/transactions', transactionRoutes);
+app.use('/api/logs', logsRoutes);
 app.use('/api', financeRoutes);
 
 // Also support routes without /api prefix (backwards compat with frontend)
 app.use('/auth', authRoutes);
 app.use('/transactions', transactionRoutes);
+app.use('/logs', logsRoutes);
 app.use('/', financeRoutes);
 
 // ─── 404 handler ─────────────────────────────────────────────────────────────
