@@ -28,45 +28,29 @@ async function storeRefreshToken(userId, token) {
 }
 
 async function sendOTPEmail(email, name, otp) {
-  const { google } = require('googleapis');
-  const nodemailer = require('nodemailer');
+  const SibApiV3Sdk = require('sib-api-v3-sdk');
+  const defaultClient = SibApiV3Sdk.ApiClient.instance;
+  const apiKey = defaultClient.authentications['api-key'];
+  apiKey.apiKey = process.env.BREVO_API_KEY;
 
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GMAIL_CLIENT_ID,
-    process.env.GMAIL_CLIENT_SECRET,
-    'https://developers.google.com/oauthplayground'
-  );
-  oauth2Client.setCredentials({ refresh_token: process.env.GMAIL_REFRESH_TOKEN });
+  const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
+  const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
 
-  const { token: accessToken } = await oauth2Client.getAccessToken();
+  sendSmtpEmail.subject = 'Your Coinzy Verification Code';
+  sendSmtpEmail.htmlContent = `
+    <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
+      <h2 style="color:#6366f1">Coinzy</h2>
+      <p>Hi ${name},</p>
+      <p>Your verification code is:</p>
+      <div style="font-size:36px;font-weight:bold;letter-spacing:8px;color:#6366f1;margin:24px 0">${otp}</div>
+      <p style="color:#666">This code expires in <strong>10 minutes</strong>.</p>
+      <p style="color:#999;font-size:12px">If you didn't request this, ignore this email.</p>
+    </div>
+  `;
+  sendSmtpEmail.sender = { name: 'Coinzy', email: 'coinzy05@gmail.com' };
+  sendSmtpEmail.to = [{ email: email, name: name }];
 
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      type: 'OAuth2',
-      user: 'lishanth2192005@gmail.com',
-      clientId: process.env.GMAIL_CLIENT_ID,
-      clientSecret: process.env.GMAIL_CLIENT_SECRET,
-      refreshToken: process.env.GMAIL_REFRESH_TOKEN,
-      accessToken: accessToken,
-    },
-  });
-
-  await transporter.sendMail({
-    from: '"Coinzy" <lishanth2192005@gmail.com>',
-    to: email,
-    subject: 'Your Coinzy Verification Code',
-    html: `
-      <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
-        <h2 style="color:#6366f1">Coinzy</h2>
-        <p>Hi ${name},</p>
-        <p>Your verification code is:</p>
-        <div style="font-size:36px;font-weight:bold;letter-spacing:8px;color:#6366f1;margin:24px 0">${otp}</div>
-        <p style="color:#666">This code expires in <strong>10 minutes</strong>.</p>
-        <p style="color:#999;font-size:12px">If you didn't request this, ignore this email.</p>
-      </div>
-    `,
-  });
+  await apiInstance.sendTransacEmail(sendSmtpEmail);
 }
 
 router.post('/register', authLimiter, validate(schemas.register), async (req, res) => {
