@@ -28,10 +28,32 @@ async function storeRefreshToken(userId, token) {
 }
 
 async function sendOTPEmail(email, name, otp) {
-  const { Resend } = require('resend');
-  const resend = new Resend(process.env.RESEND_API_KEY);
-  await resend.emails.send({
-    from: 'Coinzy <onboarding@resend.dev>',
+  const { google } = require('googleapis');
+  const nodemailer = require('nodemailer');
+
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GMAIL_CLIENT_ID,
+    process.env.GMAIL_CLIENT_SECRET,
+    'https://developers.google.com/oauthplayground'
+  );
+  oauth2Client.setCredentials({ refresh_token: process.env.GMAIL_REFRESH_TOKEN });
+
+  const { token: accessToken } = await oauth2Client.getAccessToken();
+
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      type: 'OAuth2',
+      user: 'lishanth2192005@gmail.com',
+      clientId: process.env.GMAIL_CLIENT_ID,
+      clientSecret: process.env.GMAIL_CLIENT_SECRET,
+      refreshToken: process.env.GMAIL_REFRESH_TOKEN,
+      accessToken: accessToken,
+    },
+  });
+
+  await transporter.sendMail({
+    from: '"Coinzy" <lishanth2192005@gmail.com>',
     to: email,
     subject: 'Your Coinzy Verification Code',
     html: `
